@@ -14,12 +14,26 @@ Before cloud mutation, read `qm.config.jsonc` when it exists. Its `target` is
 the selected provider; confirm it with the operator and do not offer to change
 it in place. If the repository has not been initialized, collect:
 
-- Fly.io or AWS;
-- deployment slug and first administrator's verified work email;
-- model provider and model;
+- hosting target: a cloud provider, Fly.io or AWS. Recommend Fly.io when the
+  operator has no preference. The docker target runs everything on the local
+  machine, is for a quick local test drive only, and is outside this
+  workflow; never present it as the recommended path for a real deployment;
+- the first administrator's verified work email;
+- model provider: Anthropic, OpenAI, or OpenRouter (one key that routes to
+  many models). The key is entered later on the Admin page, so "decide later"
+  is acceptable;
+- model;
 - region and provider account or organization;
 - whether the provider hostname is acceptable;
 - connectors to enable, including whether to add Slack now.
+
+The deployment slug is a local name for this deployment — it appears in the
+package name, resource names, and Slack branding. Derive it from the
+organization's name (a lowercase DNS label) and confirm it in passing; do not
+make the operator decide it as a standalone question. On Fly.io the slug is
+the default `appPrefix`, and app names like `<prefix>-core` must be free on
+fly.dev; on a collision set a distinctive `appPrefix` rather than renaming
+the organization.
 
 Explain the selected provider's billable resources and confirm the provider
 identity, region, resource list, and expected billing.
@@ -32,8 +46,8 @@ contracts are scaffolded as one unit.
 
 Require Node 24+, npm, Git, Docker with Buildx, and `openssl`.
 
-For a repository without `qm.config.jsonc`, first ask for the provider and
-organization slug, install an exact CLI version, and initialize its root:
+For a repository without `qm.config.jsonc`, first confirm the hosting target
+and the derived slug, install an exact CLI version, and initialize its root:
 
 ```bash
 npm exec --yes --package=@yc-software/qm@<exact-version> -- \
@@ -69,11 +83,15 @@ identity provider to register: the CLI generates the broker's signing key and
 the portal's client credentials and derives every `OIDC_*` value from
 `publicUrl`. Setting any of them by hand is refused.
 
-What the operator supplies is an email transport. Choose it and set
-`env.auth.AUTH_EMAIL_TRANSPORT` to `resend` or `smtp`, optionally set
+What the operator supplies is a way to send those emails. Do not ask them to
+pick a transport by name; ask what they already use for email. An existing
+mail account or relay (Google Workspace, Postmark, SES, Fastmail) means SMTP —
+recommend it, since it needs no DNS work — and only an operator who prefers
+Resend and controls DNS for a sending domain should pick `resend`. Set
+`env.auth.AUTH_EMAIL_TRANSPORT` accordingly, optionally set
 `env.auth.AUTH_ALLOWED_EMAIL_DOMAIN` to admit a whole domain, then read
-`.codex/skills/deploy-qm/references/email.md` before collecting secrets — one
-of its steps needs DNS control you will not have, so raise it with the operator
+`.codex/skills/deploy-qm/references/email.md` before collecting secrets — the
+Resend path needs DNS control you will not have, so raise it with the operator
 early. Configure services, model, and the final public origin in the same pass.
 
 To use an external work-email OIDC provider instead, drop `"auth"` from
