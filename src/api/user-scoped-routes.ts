@@ -87,6 +87,7 @@ const SYSTEM: Rule[] = [
   pat("POST", "/v1/grants/revoke"),
   pat("POST", "/v1/blobs"),
   pat("POST", "/v1/egress-audit"),
+  pat("POST", "/v1/auth/broker/claim"),
   pat("PUT", "/v1/deployment-layer"),
   pat("POST", "/v1/session-cap"),
   pat("POST", "/v1/keychain/drops/:id"),

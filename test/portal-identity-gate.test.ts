@@ -11,6 +11,8 @@ import { mintSignedPayload } from "../src/auth/signed-token.ts";
 import { verifyCapabilityToken } from "../src/auth/capability-token.ts";
 import { testConfig } from "./support/test-config.ts";
 import { scopeId } from "../src/types.ts";
+import { isUnclassifiedWrite } from "../src/api/user-scoped-routes.ts";
+import { authBrokerRoutes } from "../src/api/routes/auth-broker.ts";
 
 const SOURCE = "shared-source-auth-secret-for-tests-0001";
 const CAP = "core-only-capability-secret-for-tests-01";
@@ -298,5 +300,20 @@ describe("user-scoped routes require a portal-verified actor when enforcement is
     const claims = await verifyCapabilityToken(body.token as string, CAP);
     assert.equal(claims?.actorId, "U1");
     assert.equal(claims?.scopeId, "personal:U1");
+  });
+});
+
+describe("service-to-service writes are classified", () => {
+  it("every auth:source write route is classified, so production gating cannot demand a portal identity from a plugin", () => {
+    const unclassified = authBrokerRoutes
+      .filter((route) => "path" in route && route.auth === "source")
+      .map((route) => route as { method: string; path: string })
+      .filter((route) => isUnclassifiedWrite(route.method, route.path))
+      .map((route) => `${route.method} ${route.path}`);
+    assert.deepEqual(
+      unclassified,
+      [],
+      "an unclassified write requires a portal identity under REQUIRE_SIGNED_PORTAL_IDENTITY; add it to SYSTEM in user-scoped-routes.ts",
+    );
   });
 });
