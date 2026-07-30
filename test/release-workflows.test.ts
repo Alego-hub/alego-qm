@@ -65,7 +65,10 @@ test("the CLI package publishes publicly with provenance", () => {
 test("publishing the CLI is a separate, attested, main-only operation", () => {
   const workflow = readFileSync(".github/workflows/publish-cli.yml", "utf8");
 
-  assert.match(workflow, /^on:\n {2}workflow_dispatch:$/m);
+  assert.match(workflow, /^ {2}workflow_dispatch:$/m);
+  assert.match(workflow, /^ {2}workflow_call:$/m);
+  assert.doesNotMatch(workflow, /^ {2}push:$/m);
+  assert.doesNotMatch(workflow, /^ {2}pull_request:$/m);
   assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /permissions:\s+contents: read\s+id-token: write/);
   assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org/);
@@ -96,4 +99,98 @@ test("the published package pins real image digests, never the checked-in sentin
     refs.every((ref) => ref.startsWith("registry.invalid/")),
     "the checked-in manifest stays a sentinel so a source checkout never pulls a stale digest",
   );
+});
+
+test("the release republishes nothing already on npm so a half-finished run can resume", () => {
+  const workflow = readFileSync(".github/workflows/publish-cli.yml", "utf8");
+
+  assert.match(workflow, /if npm view "@yc-software\/qm@\$version" version/);
+  assert.ok(
+    workflow.indexOf("npm view") < workflow.indexOf("npm publish --provenance"),
+    "the already-published check guards the publish rather than following it",
+  );
+  assert.match(workflow, /manifest: \$\{\{ steps\.pin\.outputs\.manifest \}\}/);
+});
+
+test("one dispatchable workflow drives the whole release, main-only and in order", () => {
+  const workflow = readFileSync(".github/workflows/release.yml", "utf8");
+
+  assert.match(workflow, /^on:\n {2}workflow_dispatch:$/m);
+  assert.match(workflow, /releases are cut from main; this run is on \$GITHUB_REF/);
+  assert.doesNotMatch(
+    workflow,
+    /^ {4}if: github\.ref == 'refs\/heads\/main'$/m,
+    "a non-main dispatch fails loudly instead of skipping every job and reporting green",
+  );
+  assert.match(
+    workflow,
+    /^ {2}images:\n[\s\S]*?needs: preflight\n[\s\S]*?uses: \.\/\.github\/workflows\/release-package\.yml$/m,
+  );
+  assert.match(workflow, /^ {2}cli:\n[\s\S]*?needs: images\n[\s\S]*?uses: \.\/\.github\/workflows\/publish-cli\.yml$/m);
+  assert.match(workflow, /^ {2}release:\n[\s\S]*?needs:\n {6}- preflight\n {6}- cli$/m);
+  assert.match(workflow, /concurrency:\n {2}group: release\n {2}cancel-in-progress: false/);
+});
+
+test("the release refuses a tag it already published and writes the tag last", () => {
+  const workflow = readFileSync(".github/workflows/release.yml", "utf8");
+
+  assert.match(workflow, /tag="v\$\(jq -r \.version cli\/package\.json\)"/);
+  assert.match(workflow, /is already released; bump cli\/package\.json before releasing again/);
+  assert.ok(
+    workflow.indexOf("already released") < workflow.indexOf("gh release create"),
+    "the tag gate runs before anything is published",
+  );
+  assert.match(workflow, /gh release create "\$TAG"/);
+  assert.match(workflow, /--generate-notes/);
+  assert.match(workflow, /"images\.json#Pinned image digests"/);
+});
+
+test("the tag is created atomically at the released commit, never adopted from elsewhere", () => {
+  const workflow = readFileSync(".github/workflows/release.yml", "utf8");
+
+  assert.match(
+    workflow,
+    /gh api "repos\/\$GITHUB_REPOSITORY\/git\/refs" \\\n\s+-f ref="refs\/tags\/\$TAG" -f sha="\$GITHUB_SHA"/,
+  );
+  assert.match(workflow, /--verify-tag/);
+  assert.doesNotMatch(
+    workflow,
+    /--target/,
+    "--target only names a commit when gh creates the tag itself, so a tag another actor raced in would silently win",
+  );
+  assert.ok(
+    workflow.indexOf("git/refs") < workflow.indexOf("gh release create"),
+    "the ref is created before the release so a duplicate tag fails the run",
+  );
+});
+
+test("a resumed publish keeps npm only when it already pins the digests being released", () => {
+  const workflow = readFileSync(".github/workflows/publish-cli.yml", "utf8");
+
+  assert.match(workflow, /npm pack "@yc-software\/qm@\$version"/);
+  assert.match(workflow, /tar -xzf "\$published\/\$tarball" -C "\$published" package\/manifest\.json/);
+  assert.match(workflow, /is on npm pinning different image digests; bump the version/);
+  assert.ok(
+    workflow.indexOf("npm pack") < workflow.indexOf("keeping it"),
+    "the published tarball is compared before the publish is skipped",
+  );
+});
+
+test("only the tagging job may write to the repository", () => {
+  const workflow = readFileSync(".github/workflows/release.yml", "utf8");
+
+  const writes = workflow.match(/^ {6}contents: write$/gm) ?? [];
+  assert.equal(writes.length, 1);
+  assert.match(workflow, /^ {2}release:\n[\s\S]*?permissions:\n {6}contents: write\n[\s\S]*?gh release create/m);
+  assert.doesNotMatch(workflow, /packages: write\n {4}secrets: inherit/);
+});
+
+test("images are signed from a main ref, so the pinned cosign identity keeps verifying", () => {
+  const release = readFileSync(".github/workflows/release.yml", "utf8");
+  const images = readFileSync(".github/workflows/release-package.yml", "utf8");
+
+  assert.match(release, /^on:\n {2}workflow_dispatch:$/m);
+  assert.doesNotMatch(release, /^ {2}push:$/m);
+  assert.match(release, /if \[ "\$GITHUB_REF" != refs\/heads\/main \]/);
+  assert.match(images, /--certificate-identity='[^']*release-package\.yml@refs\/heads\/main'/);
 });
