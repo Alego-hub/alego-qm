@@ -12,6 +12,7 @@ import type {
 } from "../types.ts";
 import { scopeId as toScopeId, personalScope } from "../types.ts";
 import { turnOriginRequestFields } from "./turn-origin.ts";
+import { resolveTurnFastMode } from "./turn-options.ts";
 import { orgId } from "../config.ts";
 import { renderGatewayContext } from "./gateway-context.ts";
 import { deriveTurnOutcome, approvalBlocksInput } from "./turn-outcome.ts";
@@ -2032,6 +2033,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
               ? Math.min(requestedTurnWallClockMs, configuredTurnWallClockMs)
               : requestedTurnWallClockMs;
         }
+        const wantsOrgFastMode =
+          typeof input.fastMode !== "boolean" && humanTurn && (await deps.config?.getInteractiveFastModeDurable());
+        const effectiveFastMode = resolveTurnFastMode(input.fastMode, humanTurn, wantsOrgFastMode === true);
         const runHarnessTurn = (
           harnessInput: string,
           extras: {
@@ -2069,7 +2073,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
             ...(input.harness ? { harness: input.harness } : {}),
             ...(input.model ? { model: input.model } : {}),
             ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
-            ...(typeof input.fastMode === "boolean" ? { fastMode: input.fastMode } : {}),
+            ...(typeof effectiveFastMode === "boolean" ? { fastMode: effectiveFastMode } : {}),
             ...(strictReadOnly ? { readOnly: true } : {}),
             ...(input.surfaceTools && surfaceToolDeps
               ? {
