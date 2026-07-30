@@ -119,12 +119,6 @@ export const MODEL_PROVIDER_HARNESSES: Readonly<Record<ModelProvider, readonly s
   openrouter: ["pi", "mock"],
 };
 
-export const MODEL_PROVIDER_BASE_MODELS: Readonly<Record<ModelProvider, string>> = {
-  anthropic: "claude-opus-5",
-  openai: "gpt-5.6-sol",
-  openrouter: "openrouter/auto",
-};
-
 export const isModelProvider = (value: unknown): value is ModelProvider =>
   typeof value === "string" && (MODEL_PROVIDERS as readonly string[]).includes(value);
 
@@ -712,6 +706,12 @@ function validate(raw: unknown, path: string): QmConfig {
 
 function configuredHarness(config: QmConfig): string {
   return config.env.core?.HARNESS?.trim() || (config.target === "fly" ? "pi" : "mock");
+}
+
+export function mockHarnessWarning(config: QmConfig): string | undefined {
+  if (configuredHarness(config) !== "mock") return undefined;
+  const unset = !config.env.core?.HARNESS?.trim();
+  return `env.core.HARNESS is ${unset ? "unset, which means" : "set to"} "mock": this deployment answers every message with canned text and calls no model provider. Set it to "pi" for a deployment that runs real agent turns.`;
 }
 
 function validateModelProvider(config: QmConfig, path: string): void {

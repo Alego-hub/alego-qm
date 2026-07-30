@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
-  MODEL_PROVIDER_BASE_MODELS,
   MODEL_PROVIDER_KEYS,
+  mockHarnessWarning,
   validatePortalTrust,
   type ModelProvider,
   type QmConfig,
@@ -199,6 +199,8 @@ export async function doctorCommon(
 }
 
 async function baseModelCheck(config: QmConfig, secrets: Map<string, string>): Promise<void> {
+  const mockHarness = mockHarnessWarning(config);
+  if (mockHarness) warn(mockHarness);
   const provider = config.modelProvider;
   if (!provider) {
     step("base model: no modelProvider set — an administrator supplies the key from the Admin page");
@@ -211,7 +213,7 @@ async function baseModelCheck(config: QmConfig, secrets: Map<string, string>): P
     return;
   }
   await modelProviderCheck(provider, key);
-  step(`base model provider ${provider}: ${name} accepted, serving ${MODEL_PROVIDER_BASE_MODELS[provider]}`);
+  step(`base model provider ${provider}: ${name} accepted`);
 }
 
 const MODEL_PROVIDER_PROBES: Readonly<
