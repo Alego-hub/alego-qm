@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
-import { boolEnv, loadConfig, numEnv, CONFIG_DEFAULTS } from "../src/config.ts";
+import { baseModelProviders, boolEnv, loadConfig, numEnv, CONFIG_DEFAULTS } from "../src/config.ts";
 
 const productionEnv = {
   NODE_ENV: "production",
@@ -350,4 +350,44 @@ test("maxClaims defaults from CONFIG_DEFAULTS and MAX_CLAIMS overrides", () => {
   assert.equal(loadConfig({}).maxClaims, CONFIG_DEFAULTS.maxClaims);
   assert.equal(loadConfig({ MAX_CLAIMS: "5" }).maxClaims, 5);
   assert.throws(() => loadConfig({ MAX_CLAIMS: "lots" }), /MAX_CLAIMS="lots" is not a number/);
+});
+
+test("MODEL_PROVIDER declares the vendor that bills the base model", () => {
+  assert.equal(loadConfig({}).modelProvider, undefined);
+  assert.equal(loadConfig({ MODEL_PROVIDER: " openrouter ", OPENROUTER_API_KEY: "k" }).modelProvider, "openrouter");
+  assert.throws(() => loadConfig({ MODEL_PROVIDER: "bedrock" }), /MODEL_PROVIDER.*not recognized/);
+});
+
+test("MODEL_PROVIDER is refused when the harness can never run that vendor's models", () => {
+  assert.throws(
+    () => loadConfig({ MODEL_PROVIDER: "openrouter", HARNESS: "codex", OPENROUTER_API_KEY: "k", OPENAI_API_KEY: "k" }),
+    /cannot serve a base model on HARNESS=codex/,
+  );
+  assert.throws(
+    () => loadConfig({ MODEL_PROVIDER: "anthropic", HARNESS: "codex", ANTHROPIC_API_KEY: "k", OPENAI_API_KEY: "k" }),
+    /cannot serve a base model on HARNESS=codex/,
+  );
+  assert.throws(
+    () => loadConfig({ MODEL_PROVIDER: "openrouter", HARNESS: "opencode", OPENROUTER_API_KEY: "k" }),
+    /cannot serve a base model on HARNESS=opencode/,
+    "opencode has no OpenRouter route",
+  );
+  assert.equal(
+    loadConfig({ MODEL_PROVIDER: "openai", HARNESS: "codex", OPENAI_API_KEY: "k" }).modelProvider,
+    "openai",
+    "the one combination Codex can bill is accepted",
+  );
+});
+
+test("baseModelProviders constrains the base model only when a provider is declared", () => {
+  assert.deepEqual(
+    baseModelProviders(loadConfig({ MODEL_PROVIDER: "openrouter", OPENROUTER_API_KEY: "k", ANTHROPIC_API_KEY: "k" })),
+    { anthropic: false, openai: false, openrouter: true },
+    "the declaration outranks a stray key from another vendor",
+  );
+  assert.equal(
+    baseModelProviders(loadConfig({ OPENROUTER_API_KEY: "k" })),
+    undefined,
+    "with no declaration the shipped default stands, so upgrading never moves a deployment's model or its billing",
+  );
 });

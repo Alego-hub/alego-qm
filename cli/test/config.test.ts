@@ -1135,3 +1135,46 @@ test("aws.services logGroup and stopTimeout adopt live task-def values and valid
     );
   }
 });
+
+test("modelProvider must name a vendor the configured harness can bill", () => {
+  withConfig({ modelProvider: "openrouter", env: { core: { HARNESS: "pi" } } }, ({ path }) => {
+    assert.equal(loadConfigAt(path).config.modelProvider, "openrouter");
+  });
+  withConfig({ modelProvider: "openrouter", env: { core: { HARNESS: "codex" } } }, ({ path }) => {
+    assert.throws(
+      () => loadConfigAt(path),
+      /model provider "openrouter" cannot serve a base model on env.core.HARNESS "codex"/,
+    );
+  });
+  withConfig({ modelProvider: "anthropic", env: { core: { HARNESS: "codex" } } }, ({ path }) => {
+    assert.throws(() => loadConfigAt(path), /cannot serve a base model/);
+  });
+  withConfig({ modelProvider: "openai", env: { core: { HARNESS: "codex" } } }, ({ path }) => {
+    assert.equal(loadConfigAt(path).config.modelProvider, "openai");
+  });
+  withConfig({ modelProvider: "openrouter" }, ({ path }) => {
+    assert.equal(
+      loadConfigAt(path).config.modelProvider,
+      "openrouter",
+      "an unset harness is mock, which bills anything",
+    );
+  });
+});
+
+test("env.core.MODEL_PROVIDER is validated as the provider core will actually use", () => {
+  withConfig(
+    { modelProvider: "openai", env: { core: { HARNESS: "codex", MODEL_PROVIDER: "anthropic" } } },
+    ({ path }) => {
+      assert.throws(() => loadConfigAt(path), /model provider "anthropic" cannot serve a base model/);
+    },
+  );
+  withConfig(
+    { modelProvider: "anthropic", env: { core: { HARNESS: "codex", MODEL_PROVIDER: "openai" } } },
+    ({ path }) => {
+      assert.equal(loadConfigAt(path).config.modelProvider, "anthropic", "the override decides, the declaration stays");
+    },
+  );
+  withConfig({ env: { core: { HARNESS: "pi", MODEL_PROVIDER: "bedrock" } } }, ({ path }) => {
+    assert.throws(() => loadConfigAt(path), /env.core.MODEL_PROVIDER must be one of/);
+  });
+});
