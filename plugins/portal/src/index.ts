@@ -37,6 +37,7 @@ import {
   FORWARD_BROKER_HEADERS,
 } from "./proxy.ts";
 import { signedHeaders, withSourceAuthNonce } from "../../chassis/src/core-client.ts";
+import { coreClaimStore, withinRateLimit } from "../../chassis/src/claims.ts";
 import { mintPortalIdentity, PORTAL_IDENTITY_HEADER } from "../../chassis/src/portal-identity.ts";
 import { errMessage } from "../../chassis/src/errors.ts";
 import { json, escapeHtml, serveEmojiFavicon } from "../../chassis/src/http.ts";
@@ -69,6 +70,15 @@ const LOCAL_AUTH_BYPASS_REQUESTED = process.env.PORTAL_LOCAL_AUTH_BYPASS === "1"
 const LOCAL_AUTH_BYPASS = LOCAL_AUTH_BYPASS_REQUESTED && !IS_PROD && isLocalPortalUrl(PUBLIC_URL);
 const LOCAL_AUTH_PRINCIPAL = process.env.PORTAL_DEV_PRINCIPAL || process.env.USER || "dev-admin";
 const DEPLOYMENTS_ENABLED = process.env.PORTAL_DEPLOYMENTS_ENABLED === "1";
+const PLAYGROUND = process.env.PORTAL_PLAYGROUND === "1";
+function playgroundIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) ? n : NaN;
+}
+const PLAYGROUND_MINTS_PER_IP = playgroundIntEnv("PORTAL_PLAYGROUND_MINTS_PER_IP", 30);
+const PLAYGROUND_MINT_WINDOW_S = playgroundIntEnv("PORTAL_PLAYGROUND_MINT_WINDOW_S", 3600);
 const NEUTRAL_ACCENT = "#4f46e5";
 let brandAccent = NEUTRAL_ACCENT;
 let modelProviderConfigured: boolean | undefined;
@@ -713,6 +723,72 @@ function setSession(res: ServerResponse, headers: string[]): void {
   res.setHeader("set-cookie", headers);
 }
 
+const playgroundClaims = PLAYGROUND ? coreClaimStore(CORE, CORE_SIGNING_SECRET, "portal") : null;
+
+export function mintBucketOf(ip: string): string {
+  if (!ip.includes(":")) return ip;
+  const zoneless = ip.split("%")[0] ?? "";
+  if (zoneless.toLowerCase().startsWith("::ffff:") && zoneless.includes(".")) return zoneless.slice(7);
+  const [headRaw = "", tailRaw = ""] = zoneless.split("::", 2);
+  const head = headRaw ? headRaw.split(":") : [];
+  const tail = tailRaw ? tailRaw.split(":") : [];
+  const groups = [...head, ...Array<string>(Math.max(0, 8 - head.length - tail.length)).fill("0"), ...tail];
+  const prefix = groups
+    .slice(0, 4)
+    .map((g) => (g || "0").toLowerCase().replace(/^0+(?=.)/, ""))
+    .join(":");
+  return `${prefix}::/64`;
+}
+
+export function playgroundBusyHtml(): string {
+  return cardPage({
+    title: "Playground is busy",
+    heading: "The playground is busy",
+    msg: "We couldn't start a fresh playground session for you right now. Waiting a little while and reloading resolves most cases.",
+    icon: ALERT_ICON,
+    warn: true,
+    actions: `<a class="btn primary" href="/">Try again</a>`,
+    help: "Playground sessions are limited per visitor to keep the demo responsive for everyone.",
+  });
+}
+
+export function playgroundRestrictedHtml(): string {
+  return cardPage({
+    title: "Not available in the playground",
+    heading: "Not available in the playground",
+    msg: "Connecting accounts and dropping secrets are disabled for anonymous playground sessions — clearing your cookie would orphan real credentials.",
+    icon: LOCK_ICON,
+    actions: `<a class="btn primary" href="/">Back to the playground</a>`,
+    help: "Sign in with a real account at /auth/login to use this link.",
+  });
+}
+
+async function mintPlaygroundSession(req: IncomingMessage, res: ServerResponse): Promise<SessionClaims | null> {
+  if (!playgroundClaims) return null;
+  const allowed = await withinRateLimit(playgroundClaims, {
+    secret: SESSION_SECRET ?? DEV_SECRET,
+    kind: "playground-mint",
+    value: mintBucketOf(clientIpOf(req)),
+    limit: PLAYGROUND_MINTS_PER_IP,
+    windowS: PLAYGROUND_MINT_WINDOW_S,
+    nowMs: Date.now(),
+  });
+  if (!allowed) return null;
+  const now = Math.floor(Date.now() / 1000);
+  const session: SessionClaims = {
+    k: "session",
+    sub: `playground-${randomToken(8)}`,
+    org: ORG,
+    name: "Guest",
+    anon: true,
+    auth: now,
+    iat: now,
+    exp: now + SESSION_TTL_S,
+  };
+  setSession(res, sessionCookieSet(seal(session, sessionKey)));
+  return session;
+}
+
 function renewSessionCookie(req: IncomingMessage, res: ServerResponse): void {
   const session = openSession(
     readCookie(req.headers.cookie, "portal_session"),
@@ -793,7 +869,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     );
   }
 
-  const session = currentSession(req);
+  let session = currentSession(req);
   if (session) renewSessionCookie(req, res);
 
   if (pathname === "/auth/impersonate" && method === "POST") {
@@ -854,6 +930,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const redeem = /^\/connect\/redeem\/([^/]+)$/.exec(pathname);
   if (method === "GET" && redeem) {
     if (!session) return consentBounce();
+    if (session.anon) return sendHtml(res, 403, playgroundRestrictedHtml());
     return handleConsentRedeem(res, {
       corePath: `/v1/connectors/oauth/consent/redeem/${redeem[1]}${url.search}`,
       session,
@@ -862,6 +939,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const selfConnect = /^\/connect\/([^/]+)\/self-connect$/.exec(pathname);
   if (method === "GET" && selfConnect) {
     if (!session) return consentBounce();
+    if (session.anon) return sendHtml(res, 403, playgroundRestrictedHtml());
     return handleSelfConnect(res, { provider: decodeURIComponent(selfConnect[1] ?? ""), session });
   }
 
@@ -872,6 +950,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const dropForm = /^\/drop\/([^/]+)\/form$/.exec(pathname);
   if (method === "GET" && dropForm) {
     if (!session) return consentBounce();
+    if (session.anon) return sendHtml(res, 403, playgroundRestrictedHtml());
     return handleSecretDrop(req, res, {
       method,
       corePath: `/v1/keychain/drops/${dropForm[1]}/form${url.search}`,
@@ -886,6 +965,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         message: "your session expired — re-open the link, sign in, and paste again",
       });
     if (!sameOriginRequest(req)) return json(res, 403, { error: "forbidden", message: "cross-origin request refused" });
+    if (session.anon)
+      return json(res, 403, { error: "forbidden", message: "secret drops are disabled for playground sessions" });
     return handleSecretDrop(req, res, {
       method,
       corePath: `/v1/keychain/drops/${dropSubmit[1]}${url.search}`,
@@ -920,11 +1001,17 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (!session) {
     if (method === "GET" && wantsHtml(req)) {
-      const returnTo = encodeURIComponent(`${pathname}${url.search}`);
-      res.writeHead(302, { location: `/auth/login?returnTo=${returnTo}` });
-      return void res.end();
+      if (PLAYGROUND) {
+        session = await mintPlaygroundSession(req, res);
+        if (!session) return sendHtml(res, 429, playgroundBusyHtml());
+      } else {
+        const returnTo = encodeURIComponent(`${pathname}${url.search}`);
+        res.writeHead(302, { location: `/auth/login?returnTo=${returnTo}` });
+        return void res.end();
+      }
+    } else {
+      return json(res, 401, { error: "sign in" });
     }
-    return json(res, 401, { error: "sign in" });
   }
 
   if (method !== "GET" && method !== "HEAD" && !sameOriginRequest(req)) {
@@ -950,6 +1037,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   const key = surfaceKey as string;
   if (key === "admin") {
+    if (session.anon) {
+      if (wantsHtml(req)) return sendHtml(res, 403, nonAdminDeniedHtml({ sub: session.sub, org: session.org }));
+      return json(res, 403, { error: "forbidden", message: "admin access required" });
+    }
     const probe = await adminProbe(session.sub);
     if (!probe.isAdmin) {
       if (wantsHtml(req)) {
@@ -1083,6 +1174,32 @@ export function bootChecks(): void {
   if (LOCAL_AUTH_BYPASS_REQUESTED && !isLocalPortalUrl(PUBLIC_URL)) {
     problems.push("PORTAL_LOCAL_AUTH_BYPASS requires a localhost, 127.0.0.1, or ::1 PORTAL_PUBLIC_URL");
   }
+  if (PLAYGROUND) {
+    if (!Number.isInteger(PLAYGROUND_MINTS_PER_IP) || PLAYGROUND_MINTS_PER_IP < 1 || PLAYGROUND_MINTS_PER_IP > 64) {
+      problems.push(
+        "PORTAL_PLAYGROUND_MINTS_PER_IP must be an integer between 1 and 64 (the core grants at most 64 claim slots per request)",
+      );
+    }
+    if (
+      !Number.isInteger(PLAYGROUND_MINT_WINDOW_S) ||
+      PLAYGROUND_MINT_WINDOW_S < 60 ||
+      PLAYGROUND_MINT_WINDOW_S > 86400
+    ) {
+      problems.push(
+        "PORTAL_PLAYGROUND_MINT_WINDOW_S must be an integer between 60 and 86400 (the core's claim horizon is 24 hours)",
+      );
+    }
+    if (COOKIE_DOMAIN || APPS_DOMAIN) {
+      problems.push(
+        "PORTAL_PLAYGROUND requires PORTAL_COOKIE_DOMAIN and PORTAL_APPS_DOMAIN unset — a domain-wide cookie would carry anonymous sessions to app subdomains, which never see the anon flag",
+      );
+    }
+    if (DEPLOYMENTS_ENABLED) {
+      problems.push(
+        "PORTAL_PLAYGROUND requires PORTAL_DEPLOYMENTS_ENABLED unset — anonymous visitors must not reach deployed apps",
+      );
+    }
+  }
   if (APPS_DOMAIN && !COOKIE_DOMAIN) {
     problems.push(
       "PORTAL_APPS_DOMAIN requires PORTAL_COOKIE_DOMAIN (app returnTo without a domain-wide session cookie loops sign-in forever)",
@@ -1207,6 +1324,14 @@ export function startServer(): void {
     if (LOCAL_AUTH_BYPASS)
       console.warn(
         `[portal] PORTAL_LOCAL_AUTH_BYPASS=1 -- using ${LOCAL_AUTH_PRINCIPAL} as the local session principal (dev/test only)`,
+      );
+    if (PLAYGROUND)
+      console.warn(
+        `[portal] PORTAL_PLAYGROUND=1 -- unauthenticated visitors get anonymous browser-pinned sessions (${PLAYGROUND_MINTS_PER_IP} mints per IP per ${PLAYGROUND_MINT_WINDOW_S}s); admin sign-in stays on /auth/login`,
+      );
+    if (PLAYGROUND && !ON_FLY && XFF_TRUSTED_HOPS === 0)
+      console.warn(
+        "[portal] playground mint limits key on the socket address — set PORTAL_XFF_TRUSTED_HOPS when behind a reverse proxy, or every visitor shares one bucket",
       );
     console.log(
       "[portal] /admin access is derived (portal → admin surface /api/whoami over 6PN → core canAdminister); the core's ADMIN_GRANTS is the one source of admin identity",
