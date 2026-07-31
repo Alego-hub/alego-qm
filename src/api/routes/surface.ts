@@ -971,9 +971,12 @@ async function runtimeConfigBody(ctx: ApiCtx, scope: ScopeId): Promise<Record<st
   }
   const effective = scopeOverride ?? orgDefault;
   const selected = [orgDefault, scopeOverride, effective].filter((choice) => choice !== null);
+  const allowlist = await config.getWebuiModelsDurable(org);
   const modelsByHarness = Object.fromEntries(
     approvedHarnesses.map((harnessId) => {
-      const ids = selectableCatalogForHarness(catalog, harnessId).map((model) => model.id);
+      const ids = allowlist?.length
+        ? allowlist.filter((id) => modelSupportedByHarness(id, harnessId))
+        : selectableCatalogForHarness(catalog, harnessId).map((model) => model.id);
       for (const choice of selected) {
         if (
           choice.harnessId === harnessId &&

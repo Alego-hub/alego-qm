@@ -240,14 +240,8 @@ test("runtime-config lets a person set, keep, and inherit an approved personal r
     };
     assert.equal(initial.effective.harnessId, "pi");
     assert.equal(initial.scopeOverride, null);
-    assert.deepEqual(initial.modelsByHarness.claude, [
-      "claude-fable-5",
-      "claude-opus-5",
-      "claude-opus-4-8",
-      "claude-sonnet-5",
-      "claude-haiku-4-5",
-    ]);
-    assert.deepEqual(initial.modelsByHarness.codex, ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+    assert.deepEqual(initial.modelsByHarness.claude, ["claude-sonnet-4-6"]);
+    assert.deepEqual(initial.modelsByHarness.codex, ["gpt-5.5"]);
 
     const outsidePicker = await fetch(`${srv.base}/v1/runtime-config`, {
       method: "PUT",

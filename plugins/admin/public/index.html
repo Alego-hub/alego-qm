@@ -4303,14 +4303,22 @@
                 </section>
                 <section class="card hidden" id="card-webui-models">
                   <div class="head">
-                    <h2>Web UI model picker</h2>
+                    <h2>Allowed models</h2>
                     <p>
-                      Which models appear in the web UI's per-turn model picker, org-wide. Check the ones to offer and
-                      pick which is pre-selected by default. Leave all unchecked to restore the built-in set.
+                      Restrict which models the web UI offers and accepts, org-wide. Add the models to allow and pick
+                      which is pre-selected by default. Remove every chip to allow the deployment's full model set.
                     </p>
                   </div>
                   <div class="body">
-                    <div id="webui-models-list" style="display: flex; flex-direction: column; gap: 6px"></div>
+                    <div id="webui-models-chips" style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center">
+                      <input
+                        id="webui-models-add"
+                        list="webui-models-catalog"
+                        placeholder="+ Add model"
+                        style="max-width: 240px"
+                      />
+                      <datalist id="webui-models-catalog"></datalist>
+                    </div>
                     <label for="webui-models-default" style="margin-top: 10px">Default</label>
                     <select id="webui-models-default" style="max-width: 360px"></select>
                   </div>
@@ -4820,6 +4828,7 @@
       let memDraft = null;
       let memDraftScope = null;
       let cronDestinationEditId = null;
+      let webuiModelIds = [];
       const transcriptVisibility = { thinking: true, toolResults: true };
 
       const API_BASE = "__ADMIN_BASE__";
@@ -6305,48 +6314,84 @@
         const showWebuiModels = scope.startsWith("org:") && opts.length > 0;
         $("card-webui-models").classList.toggle("hidden", !showWebuiModels);
         if (showWebuiModels) {
-          const configured = Array.isArray(r.data.webuiModels) ? r.data.webuiModels : null;
-          const enabledIds = configured && configured.length ? configured : opts.map((m) => m.id);
-          const list = $("webui-models-list");
-          list.textContent = "";
-
-          const ordered = [
-            ...enabledIds.filter((id) => opts.some((m) => m.id === id)),
-            ...opts.map((m) => m.id).filter((id) => !enabledIds.includes(id)),
-          ];
-          ordered.forEach((id) => {
-            const m = opts.find((x) => x.id === id) || { id, name: id };
-            const row = document.createElement("label");
-            row.style.display = "flex";
-            row.style.gap = "8px";
-            row.style.alignItems = "center";
-            const cb = document.createElement("input");
-            cb.type = "checkbox";
-            cb.value = id;
-            cb.checked = enabledIds.includes(id);
-            const span = document.createElement("span");
-            span.textContent = m.name + " (" + id + ")";
-            row.appendChild(cb);
-            row.appendChild(span);
-            list.appendChild(row);
-          });
+          const catalogModels = Object.values(modelsByHarness)
+            .flat()
+            .concat(opts)
+            .filter((m, i, all) => m && m.id && all.findIndex((x) => x && x.id === m.id) === i);
+          const modelLabel = (id) => {
+            const m = catalogModels.find((x) => x.id === id);
+            return m && m.name && m.name !== id ? m.name + " (" + id + ")" : id;
+          };
+          const configured = Array.isArray(r.data.webuiModels) ? r.data.webuiModels.filter(Boolean) : [];
+          webuiModelIds = [...configured];
+          const chips = $("webui-models-chips");
+          const addInput = $("webui-models-add");
           const syncDefault = () => {
             const dsel = $("webui-models-default");
             const prev = dsel.value;
-            const checked = Array.from(list.querySelectorAll("input[type=checkbox]:checked")).map((c) => c.value);
             dsel.textContent = "";
-            checked.forEach((id) => {
-              const m = opts.find((x) => x.id === id) || { id, name: id };
+            webuiModelIds.forEach((id) => {
               const o = document.createElement("option");
               o.value = id;
-              o.textContent = m.name + " (" + id + ")";
+              o.textContent = modelLabel(id);
               dsel.appendChild(o);
             });
-            dsel.value = checked.includes(prev) ? prev : checked[0] || "";
+            dsel.value = webuiModelIds.includes(prev) ? prev : webuiModelIds[0] || "";
+            dsel.disabled = !webuiModelIds.length;
           };
-          list.oninput = syncDefault;
+          const renderChips = () => {
+            chips.querySelectorAll("[data-chip]").forEach((n) => n.remove());
+            webuiModelIds.forEach((id) => {
+              const chip = document.createElement("span");
+              chip.dataset.chip = id;
+              chip.style.cssText =
+                "display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--border, #d4d4d4);border-radius:999px;font-size:13px";
+              const label = document.createElement("span");
+              label.textContent = modelLabel(id);
+              const x = document.createElement("button");
+              x.type = "button";
+              x.textContent = "×";
+              x.setAttribute("aria-label", "Remove " + id);
+              x.style.cssText = "border:0;background:none;cursor:pointer;padding:0;font-size:14px;line-height:1";
+              x.onclick = () => {
+                webuiModelIds = webuiModelIds.filter((v) => v !== id);
+                renderChips();
+                syncDefault();
+              };
+              chip.appendChild(label);
+              chip.appendChild(x);
+              chips.insertBefore(chip, addInput);
+            });
+            const dl = $("webui-models-catalog");
+            dl.textContent = "";
+            catalogModels
+              .filter((m) => !webuiModelIds.includes(m.id))
+              .forEach((m) => {
+                const o = document.createElement("option");
+                o.value = m.id;
+                o.label = m.name;
+                dl.appendChild(o);
+              });
+          };
+          const addModel = () => {
+            const raw = addInput.value.trim();
+            if (!raw) return;
+            const byName = catalogModels.find((m) => m.name === raw || m.name + " (" + m.id + ")" === raw);
+            const id = catalogModels.some((m) => m.id === raw) ? raw : byName ? byName.id : raw;
+            if (!webuiModelIds.includes(id)) webuiModelIds.push(id);
+            addInput.value = "";
+            renderChips();
+            syncDefault();
+          };
+          addInput.onchange = addModel;
+          addInput.onkeydown = (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addModel();
+            }
+          };
+          renderChips();
           syncDefault();
-          $("webui-models-default").value = enabledIds[0] || "";
         }
         const showPeopleDirectory = scope.startsWith("org:");
         $("card-people-directory").classList.toggle("hidden", !showPeopleDirectory);
@@ -7731,11 +7776,9 @@
           ),
         }),
         "webui-models": () => {
-          const enabled = Array.from(document.querySelectorAll("#webui-models-list input[type=checkbox]:checked")).map(
-            (c) => c.value,
-          );
           const dflt = $("webui-models-default").value;
-          const ids = dflt && enabled.includes(dflt) ? [dflt, ...enabled.filter((id) => id !== dflt)] : enabled;
+          const ids =
+            dflt && webuiModelIds.includes(dflt) ? [dflt, ...webuiModelIds.filter((id) => id !== dflt)] : webuiModelIds;
           return { ids };
         },
         "people-directory-url": () => ({ url: $("people-directory-url").value.trim() }),
