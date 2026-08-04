@@ -251,6 +251,10 @@ function metaForScope(scopeId: string | null, fallbackName?: string | null): { t
   return { title: fallbackName?.trim() || "Personal", glyph: User };
 }
 
+export function scopeTitle(scopeId: string | null, fallbackName?: string | null): string {
+  return metaForScope(scopeId, fallbackName).title;
+}
+
 export function scopeChip(scopeId: string | null, fallbackName?: string | null): TemplateResult {
   const { title, glyph } = metaForScope(scopeId, fallbackName);
   return html`<span class="scope-chip" title=${`In ${title}`}

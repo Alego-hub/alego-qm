@@ -13,11 +13,57 @@ import { sendJson } from "../http.ts";
 import { normalizeInboundExpiresAt } from "../expiry.ts";
 import type { ApiCtx, Route } from "./route.ts";
 import { audit, resolveCapabilityDestination } from "./shared.ts";
-import { swallow } from "../../util/errors.ts";
+import { swallow, swallowAs } from "../../util/errors.ts";
 import { keychainUseCommand } from "../contract.ts";
 
 const CONSENT_ON_TRIGGERED_TURN =
   "consent can only be recorded on a turn its owner themself sent — this turn was fired by a trigger, not a person";
+
+async function resolveScopeNames(
+  app: ApiCtx["app"],
+  deps: ApiCtx["deps"],
+  scopeIds: Iterable<string>,
+): Promise<Record<string, string>> {
+  const wanted = [...new Set(scopeIds)];
+  if (!wanted.length) return {};
+  const names: Record<string, string> = {};
+  const sessionScopes =
+    (await Promise.resolve(deps.sessions?.distinctScopes()).catch(swallowAs("keychain scope names: sessions", null))) ??
+    [];
+  const byScope = new Map(sessionScopes.filter((s) => s.channelName).map((s) => [s.scopeId, s.channelName!]));
+  let channelsById: Map<string, string> | null = null;
+  let membersById: Map<string, string> | null = null;
+  for (const id of wanted) {
+    const { kind, ref } = parseScopeId(id);
+    const fromSessions = byScope.get(id);
+    if (kind === "channel" && ref) {
+      if (fromSessions) {
+        names[id] = `#${fromSessions.replace(/^#/, "")}`;
+        continue;
+      }
+      channelsById ??= new Map(
+        (await app.directoryChannels().catch(swallowAs("keychain scope names: channels", []))).map((c) => [
+          c.channelId,
+          c.name,
+        ]),
+      );
+      const name = channelsById.get(ref);
+      if (name) names[id] = `#${name.replace(/^#/, "")}`;
+    } else if (kind === "personal" && ref) {
+      membersById ??= new Map(
+        (await app.directoryMembers().catch(swallowAs("keychain scope names: members", []))).map((m) => [
+          m.principalId,
+          m.displayName,
+        ]),
+      );
+      const name = membersById.get(ref);
+      if (name) names[id] = name;
+    } else if (fromSessions) {
+      names[id] = fromSessions;
+    }
+  }
+  return names;
+}
 
 async function handleKeychain(ctx: ApiCtx): Promise<void> {
   const { res, app, deps, pathname, method, body, capability, params } = ctx;
@@ -117,7 +163,12 @@ async function handleKeychain(ctx: ApiCtx): Promise<void> {
             .sort((a, b) => b.ts - a.ts)
             .slice(0, 50)
         : [];
-      return sendJson(res, 200, { credentials, connectorCredentials, grants, asks, usage });
+      const scopeNames = await resolveScopeNames(app, deps, [
+        ...grants.map((grant) => grant.audienceScopeId),
+        ...asks.map((ask) => ask.requesterScopeId),
+        ...usage.map((row) => row.scopeLabel),
+      ]);
+      return sendJson(res, 200, { credentials, connectorCredentials, grants, asks, usage, scopeNames });
     }
 
     if (method === "DELETE" && pathname.startsWith("/v1/keychain/credentials/")) {

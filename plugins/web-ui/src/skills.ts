@@ -23,6 +23,7 @@ import {
   type SkillStatusFilter,
 } from "./skill-registry";
 import { listBackLink, listPageTpl } from "./list-page";
+import { scopeTitle } from "./contexts";
 import { focusDialogCancel, restoreDialogFocus, trapDialogFocus } from "./dialog-focus";
 import { SkillsRefreshSequence } from "./skills-refresh";
 import { SkillsMutationSequence } from "./skills-mutation";
@@ -70,6 +71,11 @@ let archiveFocusTarget: HTMLElement | null = null;
 
 function scopeLabel(scope: string): string {
   return scope ? scope.charAt(0).toUpperCase() + scope.slice(1) : "";
+}
+
+function editAudience(scopeId: string | undefined): string {
+  if (scopeId?.startsWith("personal:")) return "only you";
+  return scopeId ? scopeTitle(scopeId) : "this context";
 }
 
 async function startEdit(s: SkillItem): Promise<void> {
@@ -188,7 +194,7 @@ function skillVariant(s: SkillItem, hasScopeVariants: boolean): TemplateResult {
           <dl>
             <div>
               <dt>Scope</dt>
-              <dd>${s.scopeId ?? scopeLabel(s.scope)}</dd>
+              <dd>${s.scopeId ? scopeTitle(s.scopeId) : scopeLabel(s.scope)}</dd>
             </div>
             <div>
               <dt>Capabilities</dt>
@@ -262,7 +268,7 @@ function editorPane() {
       <div class="skill-form-heading">
         <div>
           <h1 class="pane-title">Edit /${e.name}</h1>
-          <p>Available to ${e.scopeId?.startsWith("personal:") ? "only you" : (e.scopeId ?? "this context")}</p>
+          <p>Available to ${editAudience(e.scopeId)}</p>
         </div>
         <span class="badge">Editing</span>
       </div>
@@ -299,7 +305,7 @@ function editorPane() {
       ${
         reviewed
           ? html`<div class="skill-impact" role="alert">
-              <strong>Publish this change to ${e.scopeId}?</strong>
+              <strong>Publish this change to ${scopeTitle(e.scopeId ?? null)}?</strong>
               <div class="card-meta">
                 Everyone in this context can invoke the updated instructions. Description
                 ${e.description === e.originalDescription ? "unchanged" : "changed"}; instructions
@@ -428,7 +434,7 @@ function creatorPane() {
       ${
         reviewed
           ? html`<div class="skill-impact" role="alert">
-              <strong>Publish /${c.name.trim()} to ${c.scopeId}?</strong>
+              <strong>Publish /${c.name.trim()} to ${scopeTitle(c.scopeId)}?</strong>
               <div class="card-meta">Everyone in this context can invoke and edit these instructions.</div>
             </div>`
           : nothing
@@ -609,7 +615,10 @@ function closeArchiveDialog(): void {
 }
 
 function archiveDialog(skill: SkillItem): TemplateResult {
-  const audience = skill.scope === "personal" ? "you" : `everyone in ${skill.scopeId ?? `this ${skill.scope}`}`;
+  const audience =
+    skill.scope === "personal"
+      ? "you"
+      : `everyone in ${skill.scopeId ? scopeTitle(skill.scopeId) : `this ${skill.scope}`}`;
   return html`<div
     class="project-dialog-backdrop"
     @click=${(event: MouseEvent) => event.target === event.currentTarget && closeArchiveDialog()}

@@ -1321,7 +1321,13 @@ export function renderAskNotice(
 ): string {
   const { ask, credential } = input;
   const who = input.requesterName ? `${input.requesterName} (${ask.requesterId})` : ask.requesterId;
-  const where = input.channelName ? `**#${input.channelName}**` : `\`${ask.requesterScopeId}\``;
+  // Never surface a raw Slack scope id to a person — describe the place instead.
+  let where: string;
+  if (input.channelName) where = `**#${input.channelName.replace(/^#/, "")}**`;
+  else if (ask.requesterScopeId.startsWith("group:")) where = "a group DM";
+  else if (ask.requesterScopeId.startsWith("channel:")) where = "a Slack channel";
+  else if (ask.requesterScopeId.startsWith("personal:")) where = "their own conversation";
+  else where = "a shared conversation";
   const account = credential.accountLabel ? ` (${credential.accountLabel})` : "";
   const mode = ask.requestedMode === "standing" ? "as a standing grant for that conversation" : "one time";
   return (
