@@ -279,6 +279,7 @@ export interface App {
     patch: { title?: string | null; archived?: boolean; pinned?: boolean; color?: string | null },
   ): Promise<Session | null>;
   regenerateTitle(sessionId: string, principalId: string): Promise<{ title: string | null } | null>;
+  spawnSession(principalId: string, opts: { scopeId: ScopeId; title?: string }): Promise<{ session: Session } | null>;
   forkSession(
     sessionId: string,
     principalId: string,

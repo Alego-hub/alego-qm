@@ -77,6 +77,47 @@ async function forkSession(ctx: ApiCtx): Promise<void> {
   return sendJson(res, 200, out);
 }
 
+async function spawnAgentConversation(ctx: ApiCtx): Promise<void> {
+  const { res, app, body, capability } = ctx;
+  if (!capability) {
+    return sendJson(res, 401, { error: "capability_required", message: "this endpoint is for the agent self-API" });
+  }
+  if (!livePersonCapability(capability)) {
+    return sendJson(res, 403, {
+      error: "human_attended_only",
+      message:
+        "starting a fresh conversation requires a turn a person is attending — not a cron, trigger, or other automation",
+    });
+  }
+  const b = isObj(body) ? body : {};
+  if (typeof b.text !== "string" || !b.text.trim()) {
+    return sendJson(res, 400, { error: "bad_request", message: "text required — the new session's first message" });
+  }
+  if (b.title !== undefined && typeof b.title !== "string") {
+    return sendJson(res, 400, { error: "bad_request", message: "title must be a string" });
+  }
+  const out = await app.spawnSession(capability.actorId, {
+    scopeId: capability.scopeId,
+    ...(typeof b.title === "string" ? { title: b.title } : {}),
+  });
+  if (!out) return sendJson(res, 404, { error: "not_found", message: "cannot start a session in this scope" });
+  const session = out.session;
+  const turn = await app.turn({
+    surface: session.surface ?? "web",
+    actor: { externalId: capability.actorId },
+    conversation: {
+      kind: session.type,
+      threadRef: session.threadRef,
+      ...(session.channelName ? { channelName: session.channelName } : {}),
+    },
+    text: b.text,
+    spawned: true,
+    async: true,
+  });
+  const runId = (turn as { runId?: string }).runId;
+  return sendJson(res, 202, { session, turn: { status: turn.status, ...(runId ? { runId } : {}) } });
+}
+
 async function forkAgentConversation(ctx: ApiCtx): Promise<void> {
   const { res, app, body, capability } = ctx;
   if (!capability) {
@@ -1248,6 +1289,7 @@ export const surfaceRoutes: ReadonlyArray<Route<ApiCtx>> = [
   { method: "GET", path: "/v1/conversations", auth: "either", handle: listAgentConversations },
   { method: "GET", path: "/v1/conversations/:id", auth: "either", handle: getAgentConversation },
   { method: "POST", path: "/v1/conversations/:id", auth: "either", handle: patchAgentConversation },
+  { method: "POST", path: "/v1/conversations", auth: "either", handle: spawnAgentConversation },
   { method: "POST", path: "/v1/conversations/:id/fork", auth: "either", handle: forkAgentConversation },
   { method: "GET", path: "/v1/contexts", auth: "source", handle: listContexts },
   { method: "GET", path: "/v1/scope-resources", auth: "source", handle: listScopeResources },
