@@ -218,6 +218,39 @@ test("WHAT path allowlist: an out-of-allowlist path is refused", async () => {
   assert.equal(cap.calls.length, 0);
 });
 
+test("WHAT path allowlist: percent-encoded parent traversal never escapes the prefix", async () => {
+  const mk = () => reader({ slug: "x-firehose", allowedPathPrefixes: ["/2/tweets/search"] });
+  const evil = [
+    "https://api.x.com/2/tweets/search/../secrets", // literal
+    "https://api.x.com/2/tweets/search/..%2fsecrets", // encoded slash
+    "https://api.x.com/2/tweets/search/%2e%2e/secrets", // encoded dots (URL-normalized out of prefix)
+    "https://api.x.com/2/tweets/search/%2e%2e%2fsecrets", // fully encoded
+    "https://api.x.com/2/tweets/search/%252e%252e%252fsecrets", // double-encoded
+    "https://api.x.com/2/tweets/search/..%5csecrets", // encoded backslash
+    "https://api.x.com/2/tweets/search/%zz", // undecodable
+  ];
+  for (const url of evil) {
+    const cap = captureFetch();
+    const r = await brokerCredentialCall(
+      base({ reader: mk(), body: { credential: "x-firehose", url }, fetchImpl: cap.fetch }),
+    );
+    assert.equal(r.status, 403, url);
+    assert.match(JSON.stringify(r.json), /path_not_allowed/, url);
+    assert.equal(cap.calls.length, 0, `no upstream fetch for ${url}`);
+  }
+  // benign lookalikes still pass: dots inside a segment are not dot segments
+  const cap = captureFetch();
+  const ok = await brokerCredentialCall(
+    base({
+      reader: mk(),
+      body: { credential: "x-firehose", url: "https://api.x.com/2/tweets/search/v1..v2/some%20file" },
+      fetchImpl: cap.fetch,
+    }),
+  );
+  assert.equal(ok.status, 200);
+  assert.equal(cap.calls.length, 1);
+});
+
 test("a disabled credential is refused even when the token still names it (live re-check)", async () => {
   const cap = captureFetch();
   const r = await brokerCredentialCall(

@@ -202,3 +202,37 @@ test("git HTTP broker refuses an env-delivery record like a missing credential",
   assert.equal(c.res.statusCode, 404);
   assert.equal(fetched, false, "no upstream git fetch happens");
 });
+
+test("git HTTP broker refuses encoded parent traversal past the repo path", async () => {
+  for (const path of [
+    "/v1/credentials/git/gitlab/acme/repo.git/..%2fother-repo.git/info/refs",
+    "/v1/credentials/git/gitlab/acme/repo.git/%2e%2e%2fother-repo.git/info/refs",
+    "/v1/credentials/git/gitlab/acme/repo.git/%252e%252e%252fother/info/refs",
+  ]) {
+    let fetched = false;
+    const deps: ServerDeps = {
+      control: {} as ServerDeps["control"],
+      serviceCreds: {
+        getServiceCredentialSecret: async () => ({
+          slug: "gitlab",
+          name: "GitLab git",
+          secret: "dXNlcjp0b2tlbg==",
+          host: "gitlab.example",
+          injection: { scheme: "Basic " },
+          allowedMethods: ["GET", "POST"],
+          allowedPathPrefixes: ["/acme/repo.git"],
+          enabled: true,
+        }),
+      } as unknown as ServerDeps["serviceCreds"],
+      gitHttpFetch: async () => {
+        fetched = true;
+        return { status: 200, headers: {}, body: Readable.from(["0000"]) };
+      },
+    };
+    const c = await ctx(path, "GET", deps);
+    await brokerGitHttp(c);
+    assert.equal(c.res.statusCode, 403, path);
+    assert.match(await text(c.res), /path_not_allowed/);
+    assert.equal(fetched, false, "no upstream git fetch happens");
+  }
+});
