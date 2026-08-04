@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assistantFailure, createOpenCodeHarness, latestAssistantParts } from "../src/harness/opencode-harness.ts";
@@ -293,4 +293,47 @@ test("assistantFailure classifies provider errors and exempts aborts and output-
   assert.equal(assistantFailure({ role: "assistant", error: { name: "MessageOutputLengthError" } }), null);
   assert.equal(assistantFailure({ role: "assistant" }), null);
   assert.equal(assistantFailure(undefined), null);
+});
+
+test("custom providers materialize into the opencode config (enabled + provider map, key included)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "opencode-custom-"));
+  const dump = join(dir, "config.json");
+  const bin = fakeSidecar(dir, "custom", promptHandlers(okAssistant));
+  // wrap the binary so it writes the config it received before exec
+  const wrapped = join(dir, "custom-wrapped");
+  writeFileSync(
+    wrapped,
+    `#!/bin/sh\nprintf '%s' "$OPENCODE_CONFIG_CONTENT" > ${JSON.stringify(dump)}\nexec ${JSON.stringify(bin)} "$@"\n`,
+  );
+  chmodSync(wrapped, 0o755);
+  const harness = createOpenCodeHarness({
+    binaryPath: wrapped,
+    resolveCustomProviders: async () => [
+      {
+        spec: {
+          id: "litellm",
+          name: "LiteLLM",
+          protocol: "openai" as const,
+          baseUrl: "http://litellm.internal:4000/v1",
+          models: [{ id: "deepseek-chat", name: "DeepSeek", contextWindow: 128000, maxTokens: 8192 }],
+        },
+        apiKey: "sk-lite",
+      },
+    ],
+  });
+  const entries: SessionEntry[] = [];
+  const llmRows: HarnessLlmRequestRecord[] = [];
+  try {
+    await harness.turns.runTurn(turnInput(entries, llmRows));
+    const config = JSON.parse(readFileSync(dump, "utf8"));
+    assert.ok(config.enabled_providers.includes("litellm"));
+    const litellm = config.provider.litellm;
+    assert.equal(litellm.npm, "@ai-sdk/openai-compatible");
+    assert.equal(litellm.options.baseURL, "http://litellm.internal:4000/v1");
+    assert.equal(litellm.options.apiKey, "sk-lite");
+    assert.deepEqual(litellm.models["deepseek-chat"], { name: "DeepSeek", limit: { context: 128000, output: 8192 } });
+  } finally {
+    await harness.turns.close?.();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

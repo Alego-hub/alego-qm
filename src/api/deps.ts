@@ -1,5 +1,6 @@
 import type { ModelProviderAvailability } from "../model/pi-models.ts";
 import type { ModelCredentialStore } from "../model/model-credential-store.ts";
+import type { CustomProviderStore } from "../model/custom-provider-store.ts";
 import type { ReplayDedupe } from "../auth/replay-dedupe.ts";
 import type { FetchLike, OAuthClientResolver } from "../connectors/oauth.ts";
 import type { ConsentLinkStore } from "../connectors/consent-link.ts";
@@ -81,6 +82,8 @@ export interface ServerDeps {
   providerKeys?: ModelProviderAvailability;
   modelCredentials?: ModelCredentialStore;
   modelCredentialFetch?: typeof fetch;
+  customProviders?: CustomProviderStore;
+  refreshCustomProviders?: () => Promise<void>;
   brandingDefault?: { accent?: string; mark?: string; selfLabel?: string };
   harnessId?: string;
   admin?: AdminService;

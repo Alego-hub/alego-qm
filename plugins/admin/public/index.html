@@ -3905,6 +3905,72 @@
                 ><span class="status" id="st-onboarding-model"></span>
               </div>
             </section>
+            <section class="card">
+              <div class="head">
+                <h2>Custom providers</h2>
+                <p>
+                  Point QM at any OpenAI- or Anthropic-compatible endpoint — a vendor like DeepSeek, or a gateway like
+                  LiteLLM fronting many models. Keys are validated, stored write-only, and the models join the picker.
+                </p>
+              </div>
+              <div class="body">
+                <table class="table" id="custom-provider-table">
+                  <thead>
+                    <tr>
+                      <th>Provider</th>
+                      <th>Protocol</th>
+                      <th>Endpoint</th>
+                      <th>Models</th>
+                      <th>Key</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="custom-provider-rows"></tbody>
+                </table>
+                <p class="muted" id="custom-provider-empty" hidden>No custom providers registered.</p>
+              </div>
+              <div class="body setup-form">
+                <label
+                  >Provider id (slug) <input id="custom-provider-id" autocomplete="off" placeholder="litellm"
+                /></label>
+                <label>Display name <input id="custom-provider-name" autocomplete="off" placeholder="LiteLLM" /></label>
+                <label
+                  >Protocol
+                  <select id="custom-provider-protocol">
+                    <option value="openai">OpenAI-compatible</option>
+                    <option value="anthropic">Anthropic-compatible</option>
+                  </select></label
+                >
+                <label
+                  >Base URL
+                  <input id="custom-provider-url" autocomplete="off" placeholder="https://gateway.internal/v1"
+                /></label>
+                <label
+                  >API key
+                  <input
+                    type="password"
+                    id="custom-provider-key"
+                    autocomplete="off"
+                    placeholder="Write-only; blank on edit keeps the stored key"
+                /></label>
+                <label
+                  >Models (one per line: id | name | context | maxTokens)
+                  <textarea
+                    id="custom-provider-models"
+                    rows="3"
+                    placeholder="deepseek-chat | DeepSeek V3.2 | 128000 | 8192"
+                  ></textarea>
+                </label>
+                <label class="inline"
+                  ><input type="checkbox" id="custom-provider-validate" checked /> Validate key against the endpoint
+                  (untick for gateways without a models listing)</label
+                >
+              </div>
+              <div class="foot">
+                <button class="primary" id="custom-provider-save">Save provider</button
+                ><span class="status" id="st-custom-provider"></span>
+              </div>
+            </section>
           </div>
 
           <div id="view-governance">
@@ -7044,6 +7110,7 @@
         $("onboarding-model-save").disabled = false;
         $("onboarding-model-key").value = "";
         await loadOnboarding();
+        await loadCustomProviders();
         setStatus(
           "st-onboarding-model",
           selected.ok ? "Key and base model saved." : "Key saved, but the base model could not be changed.",
@@ -7065,7 +7132,108 @@
           return;
         }
         await loadOnboarding();
+        await loadCustomProviders();
         setStatus("st-onboarding-model", "Provider disabled.", "ok");
+      };
+      let customProvidersLoaded = [];
+      function parseCustomModels(text) {
+        return text
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const [id, name, contextWindow, maxTokens] = line.split("|").map((part) => part.trim());
+            const model = { id };
+            if (name) model.name = name;
+            if (contextWindow) model.contextWindow = Number(contextWindow);
+            if (maxTokens) model.maxTokens = Number(maxTokens);
+            return model;
+          });
+      }
+      async function loadCustomProviders() {
+        const res = await api("GET", "/api/custom-providers");
+        if (!res.ok) return;
+        customProvidersLoaded = (res.data?.providers || []).filter((provider) => !provider.disabled);
+        const rows = $("custom-provider-rows");
+        rows.textContent = "";
+        $("custom-provider-empty").hidden = customProvidersLoaded.length > 0;
+        customProvidersLoaded.forEach((provider) => {
+          const tr = document.createElement("tr");
+          const cells = [
+            provider.name + " (" + provider.id + ")",
+            provider.protocol === "anthropic" ? "Anthropic" : "OpenAI",
+            provider.baseUrl,
+            provider.models.map((model) => model.id).join(", "),
+            provider.hasKey ? "set (write-only)" : "none",
+          ];
+          cells.forEach((textContent) => {
+            const td = document.createElement("td");
+            td.textContent = textContent;
+            tr.appendChild(td);
+          });
+          const actions = document.createElement("td");
+          const edit = document.createElement("button");
+          edit.textContent = "Edit";
+          edit.onclick = () => {
+            $("custom-provider-id").value = provider.id;
+            $("custom-provider-name").value = provider.name;
+            $("custom-provider-protocol").value = provider.protocol;
+            $("custom-provider-url").value = provider.baseUrl;
+            $("custom-provider-key").value = "";
+            $("custom-provider-models").value = provider.models
+              .map((model) =>
+                [model.id, model.name, model.contextWindow, model.maxTokens].filter((part) => part != null).join(" | "),
+              )
+              .join("\n");
+          };
+          const remove = document.createElement("button");
+          remove.className = "danger";
+          remove.textContent = "Remove";
+          remove.onclick = async () => {
+            if (!confirm("Remove " + provider.name + "? Its models leave every model picker.")) return;
+            const removed = await api("DELETE", "/api/custom-providers/" + encodeURIComponent(provider.id));
+            if (!removed.ok) {
+              setStatus("st-custom-provider", removed.data?.message || "Could not remove this provider.", "err");
+              return;
+            }
+            await loadCustomProviders();
+            setStatus("st-custom-provider", "Provider removed.", "ok");
+          };
+          actions.appendChild(edit);
+          actions.appendChild(remove);
+          tr.appendChild(actions);
+          rows.appendChild(tr);
+        });
+      }
+      $("custom-provider-save").onclick = async () => {
+        const id = $("custom-provider-id").value.trim();
+        const name = $("custom-provider-name").value.trim();
+        const baseUrl = $("custom-provider-url").value.trim();
+        const models = parseCustomModels($("custom-provider-models").value);
+        if (!id || !name || !baseUrl || models.length === 0) {
+          setStatus("st-custom-provider", "Provider id, name, base URL, and at least one model are required.", "err");
+          return;
+        }
+        const apiKey = $("custom-provider-key").value.trim();
+        const body = {
+          name,
+          protocol: $("custom-provider-protocol").value,
+          baseUrl,
+          models,
+          ...(apiKey ? { apiKey } : {}),
+          ...($("custom-provider-validate").checked ? {} : { validate: false }),
+        };
+        $("custom-provider-save").disabled = true;
+        setStatus("st-custom-provider", "Saving…", "saving", true);
+        const saved = await api("PUT", "/api/custom-providers/" + encodeURIComponent(id), body);
+        $("custom-provider-save").disabled = false;
+        if (!saved.ok) {
+          setStatus("st-custom-provider", saved.data?.message || "Could not save this provider.", "err", true);
+          return;
+        }
+        $("custom-provider-key").value = "";
+        await loadCustomProviders();
+        setStatus("st-custom-provider", "Provider saved. Its models are now in the picker.", "ok");
       };
       function openOnboardingTarget(target) {
         setView("connectors");

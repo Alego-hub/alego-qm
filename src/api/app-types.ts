@@ -27,6 +27,7 @@ import type { RunSignal, RunSignalStore } from "../runs/run-signal-store.ts";
 import type { TaskStore, TaskStatus } from "../tasks/task-store.ts";
 import type { ModelGateway } from "../model/model-gateway.ts";
 import type { ModelCredentialStore } from "../model/model-credential-store.ts";
+import type { CustomProviderStore } from "../model/custom-provider-store.ts";
 import type { AclStore } from "../acl/acl-store.ts";
 import type { SkillStore, Skill, SkillResolution } from "../skills/skill-store.ts";
 import type { SkillPack, NewSkillPack, SkillPackStore } from "../skills/skill-pack-store.ts";
@@ -467,6 +468,8 @@ export interface AppDeps {
   modelGateway: ModelGateway;
   modelCredentials?: ModelCredentialStore;
   modelCredentialFetch?: typeof fetch;
+  customProviders?: CustomProviderStore;
+  refreshCustomProviders?: () => Promise<void>;
   acl: AclStore;
   admin?: AdminService;
   skills: SkillStore;

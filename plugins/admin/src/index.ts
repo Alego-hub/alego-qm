@@ -267,6 +267,7 @@ const WRITES = new Map<string, string[]>([
   ["users", ["PUT", "POST"]],
   ["slack-installation", ["PUT", "DELETE"]],
   ["model-providers", ["PUT", "DELETE"]],
+  ["custom-providers", ["PUT", "DELETE"]],
 ]);
 
 const READS = [
@@ -291,6 +292,7 @@ const READS = [
   "ack-emoji-picks",
   "slack-installation",
   "model-providers",
+  "custom-providers",
 ];
 
 const server = createServer((req, res) => {

@@ -8,6 +8,8 @@ import { pathToFileURL } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk";
 import { CONFIG_DEFAULTS, type Config } from "../config.ts";
+import { isCustomModelId } from "../model/custom-providers.ts";
+import type { CustomProviderSpec } from "../model/custom-providers.ts";
 import { DEFAULT_AGENT_MODEL_ID, resolveModel } from "../model/pi-models.ts";
 import { startSignalPoll, type RunSignalStore } from "../runs/run-signal-store.ts";
 import type { LlmCallUsage } from "../sessions/session-store.ts";
@@ -44,6 +46,12 @@ export interface OpenCodeHarnessOptions {
   binaryPath?: string;
   startupTimeoutMs?: number;
   tasks?: TaskStore;
+  /**
+   * Admin-registered custom providers, resolved (with keys) when the
+   * opencode server starts. Registrations made while a server is already
+   * running apply to the next server start.
+   */
+  resolveCustomProviders?: () => Promise<Array<{ spec: CustomProviderSpec; apiKey?: string }>>;
 }
 
 export function openCodeHarnessConfigOptions(config: Config): OpenCodeHarnessOptions {
@@ -156,7 +164,14 @@ function sessionToken(secret: string, sessionId: string): string {
   return createHmac("sha256", secret).update(sessionId).digest("base64url");
 }
 
-function modelRef(id: string): { providerID: string; modelID: string } {
+export function modelRef(id: string): { providerID: string; modelID: string } {
+  // A registered custom model wins before slash-splitting: gateway model ids
+  // routinely contain slashes (e.g. "bedrock/claude-x" behind LiteLLM), and
+  // those must route to the registered provider, not a phantom "bedrock".
+  if (isCustomModelId(id)) {
+    const resolved = resolveModel(id);
+    if (resolved?.provider) return { providerID: String(resolved.provider), modelID: id };
+  }
   const slash = id.indexOf("/");
   if (slash > 0) return { providerID: id.slice(0, slash), modelID: id.slice(slash + 1) };
   const resolved = resolveModel(id);
@@ -628,6 +643,33 @@ export function createOpenCodeHarness(opts: OpenCodeHarnessOptions = {}): Harnes
         const bridgeUrl = `http://127.0.0.1:${address.port}`;
         const pluginUrl = pathToFileURL(join(import.meta.dirname, "opencode-plugin.ts")).href;
         const enabledTools = Object.fromEntries(definitions.map((item) => [item.name, true]));
+        const custom = (await opts.resolveCustomProviders?.()) ?? [];
+        const customProviderConfig = Object.fromEntries(
+          custom.map(({ spec, apiKey }) => [
+            spec.id,
+            {
+              npm: spec.protocol === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible",
+              name: spec.name,
+              options: { baseURL: spec.baseUrl, ...(apiKey ? { apiKey } : {}) },
+              models: Object.fromEntries(
+                spec.models.map((m) => [
+                  m.id,
+                  {
+                    name: m.name ?? m.id,
+                    ...(m.contextWindow || m.maxTokens
+                      ? {
+                          limit: {
+                            context: m.contextWindow ?? 128_000,
+                            output: m.maxTokens ?? 8_192,
+                          },
+                        }
+                      : {}),
+                  },
+                ]),
+              ),
+            },
+          ]),
+        );
         const config = {
           plugin: [pluginUrl],
           autoupdate: false,
@@ -636,10 +678,11 @@ export function createOpenCodeHarness(opts: OpenCodeHarnessOptions = {}): Harnes
           lsp: false,
           formatter: false,
           instructions: [],
-          enabled_providers: ["anthropic", "openai"],
+          enabled_providers: ["anthropic", "openai", ...custom.map(({ spec }) => spec.id)],
           provider: {
             anthropic: { options: { apiKey: opts.apiKey ?? "" } },
             openai: { options: { apiKey: opts.openaiApiKey ?? "" } },
+            ...customProviderConfig,
           },
           tools: {
             ...enabledTools,
