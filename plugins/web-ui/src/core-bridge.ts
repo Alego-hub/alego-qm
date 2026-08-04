@@ -412,9 +412,15 @@ export interface RuntimeConfig {
   approvedHarnesses: string[];
   modelsByHarness: Record<string, string[]>;
   modelCatalog: Record<string, { name: string; provider: string }>;
-  orgDefault: { harnessId: string; modelId: string; revision: number };
-  scopeOverride: { harnessId: string; modelId: string; orgRevision: number } | null;
-  effective: { harnessId: string; modelId: string };
+  orgDefault: { harnessId: string; modelId: string; effortLevel?: string; fastMode?: boolean; revision: number };
+  scopeOverride: {
+    harnessId: string;
+    modelId: string;
+    effortLevel?: string;
+    fastMode?: boolean;
+    orgRevision: number;
+  } | null;
+  effective: { harnessId: string; modelId: string; effortLevel?: string; fastMode?: boolean };
   upgradeAvailable: boolean;
   fastModeModelIds?: string[];
   interactiveFastMode?: boolean;
@@ -432,7 +438,14 @@ export async function fetchRuntimeConfig(scopeId?: string | null): Promise<Runti
 
 export async function updateRuntimeConfig(
   scopeId: string | null,
-  change: { harnessId?: string; modelId?: string; inherit?: boolean; keep?: boolean },
+  change: {
+    harnessId?: string;
+    modelId?: string;
+    effortLevel?: string;
+    fastMode?: boolean;
+    inherit?: boolean;
+    keep?: boolean;
+  },
 ): Promise<RuntimeConfig> {
   return api<RuntimeConfig>("/api/runtime-config", {
     method: "PUT",

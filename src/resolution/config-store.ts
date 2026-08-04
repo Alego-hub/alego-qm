@@ -63,10 +63,14 @@ export interface PersistedBaseModel {
   harnessId?: string;
   orgRevision?: number;
   revision?: number;
+  effortLevel?: string;
+  fastMode?: boolean;
 }
 interface RuntimeSelection {
   harnessId: string;
   modelId: string;
+  effortLevel?: string;
+  fastMode?: boolean;
 }
 interface ScopedRuntimeSelection extends RuntimeSelection {
   orgRevision: number;
@@ -652,6 +656,8 @@ export function createMemoryConfigStore(
         modelId: row.modelId,
         orgRevision: row.orgRevision ?? 0,
         ...(row.revision !== undefined ? { revision: row.revision } : {}),
+        ...(row.effortLevel !== undefined ? { effortLevel: row.effortLevel } : {}),
+        ...(row.fastMode !== undefined ? { fastMode: row.fastMode } : {}),
       };
     },
     setRuntimeSelection(id, selection) {
@@ -718,6 +724,8 @@ export function createMemoryConfigStore(
         modelId: row.modelId,
         orgRevision: row.orgRevision ?? 0,
         ...(row.revision !== undefined ? { revision: row.revision } : {}),
+        ...(row.effortLevel !== undefined ? { effortLevel: row.effortLevel } : {}),
+        ...(row.fastMode !== undefined ? { fastMode: row.fastMode } : {}),
       };
     },
     getApprovedHarnesses: () => (approvedHarnesses ? [...approvedHarnesses] : null),
