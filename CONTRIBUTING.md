@@ -2,7 +2,7 @@
 
 We'd like to try something a little different with this repo.
 
-Given that coding agents write most underlying code now, we'd prefer PRs in the form of _human-written_
+Given that coding agents write most underlying code now, we'd prefer `feature` PRs in the form of _human-written_
 text. This can be quite informal — just run your idea by us in the same way you would a coworker or
 friend, say, over Slack. If we're aligned on the change, we're happy to burn our tokens
 on the underlying implementation.
