@@ -128,7 +128,7 @@ test("app shell: a valid owner link becomes a host-only cookie and turns on the 
     assert.equal(page.status, 200);
     assert.match(page.body, /__qmAppShell/, "the owner's top-level document load gets the shell");
     assert.match(page.body, /<iframe id="app" src="\/"/, "the app renders inside a same-origin frame");
-    assert.match(page.body, new RegExp(PORTAL.replace(/[/.]/g, "\\$&")), "the chat column knows the portal origin");
+    assert.ok(page.body.includes(PORTAL), "the chat column knows the portal origin");
     assert.doesNotMatch(page.body, /APP<\/body>/, "the shell is served without touching the upstream");
   } finally {
     await f.close();
