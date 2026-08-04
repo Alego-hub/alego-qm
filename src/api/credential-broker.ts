@@ -51,7 +51,33 @@ function brokerHostMatches(requestHost: string, pinnedHost: string): boolean {
   return h === p || h.endsWith(`.${p}`);
 }
 
+/**
+ * A pathname that could resolve to a parent directory upstream must never pass
+ * the prefix check. The prefix match runs on the RAW pathname, but upstream
+ * servers decode percent-escapes and normalize dot segments — so `..` hidden
+ * behind any layer of percent-encoding (`..%2f`, `%2e%2e/`, `%252e%252e`) can
+ * escape the allowed prefix after we've approved it. Decode to a fixed point
+ * (bounded) and refuse any form that ever contains a dot segment; refuse
+ * undecodable paths outright.
+ */
+function resolvesToParentSegment(pathname: string): boolean {
+  let current = pathname;
+  for (let depth = 0; depth < 4; depth++) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(current);
+    } catch {
+      return true;
+    }
+    if (decoded.split(/[/\\]/).some((seg) => seg === ".." || seg === ".")) return true;
+    if (decoded === current) return false;
+    current = decoded;
+  }
+  return true;
+}
+
 export function brokerPathAllowed(pathname: string, prefixes?: string[]): boolean {
+  if (resolvesToParentSegment(pathname)) return false;
   const allow = prefixes && prefixes.length ? prefixes : ["/"];
   return allow.some((pre) =>
     pre.endsWith("/") ? pathname.startsWith(pre) : pathname === pre || pathname.startsWith(`${pre}/`),
