@@ -4,13 +4,12 @@ import test from "node:test";
 
 const composer = readFileSync(new URL("../src/composer.ts", import.meta.url), "utf8");
 
-test("scope-default buttons render only after the model selection is toggled off the default", () => {
-  assert.match(
-    composer,
-    /const modelToggled = !runtimePending && selectedModel\.value !== defaultModelValue\(scopeKey\(\)\)/,
-  );
-  assert.match(composer, /\$\{\s*modelToggled\s*\? html`[\s\S]{0,800}?>\s*Make default\s*<\/button>/);
-  assert.match(composer, /\$\{\s*modelToggled && activeRuntimeConfig\?\.scopeOverride/);
+test("scope-default buttons render when any runtime setting differs from the scope default", () => {
+  assert.match(composer, /const runtimeToggled =\s*!runtimePending/);
+  assert.match(composer, /composerState\.effortLevel !== effectiveEffort/);
+  assert.match(composer, /fastOn !== effectiveFast/);
+  assert.match(composer, /\$\{\s*runtimeToggled\s*\? html`[\s\S]{0,800}?>\s*Make default\s*<\/button>/);
+  assert.match(composer, /\$\{\s*runtimeToggled && activeRuntimeConfig\?\.scopeOverride/);
 });
 
 test("composer-right keeps its control order: make default, use org default, model, harness, send", () => {
@@ -69,4 +68,11 @@ test("a steer whose run already ended is recovered, never silently dropped", () 
   // Not stored anywhere → the text goes back through a normal send.
   assert.match(composer, /resendWhenIdle\(agent, text, 0\);/);
   assert.match(composer, /if \(composerState\.draft === text\) void sendPrompt\(agent\);/);
+});
+
+test("scope runtime defaults include effort and fast mode", () => {
+  assert.match(composer, /effortLevel: composerState\.effortLevel/);
+  assert.match(composer, /fastMode: fastOn/);
+  assert.match(composer, /config\.effective\.effortLevel/);
+  assert.match(composer, /config\.effective\.fastMode === true/);
 });

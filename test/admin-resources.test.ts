@@ -259,10 +259,25 @@ test("runtime-config lets a person set, keep, and inherit an approved personal r
     const set = await fetch(`${srv.base}/v1/runtime-config`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ principalId: "alice", scopeId: "personal:alice", harnessId: "codex", modelId: "gpt-5.5" }),
+      body: JSON.stringify({
+        principalId: "alice",
+        scopeId: "personal:alice",
+        harnessId: "codex",
+        modelId: "gpt-5.5",
+        effortLevel: "low",
+        fastMode: true,
+      }),
     });
     assert.equal(set.status, 200);
-    assert.equal(((await set.json()) as { effective: { harnessId: string } }).effective.harnessId, "codex");
+    const selected = (await set.json()) as {
+      effective: { harnessId: string; effortLevel: string; fastMode: boolean };
+    };
+    assert.deepEqual(selected.effective, {
+      harnessId: "codex",
+      modelId: "gpt-5.5",
+      effortLevel: "low",
+      fastMode: false,
+    });
 
     srv.built.config.setRuntimeSelection("org:default-org", { harnessId: "claude", modelId: "claude-opus-4-8" });
     await srv.built.config.flushScope("org:default-org");
