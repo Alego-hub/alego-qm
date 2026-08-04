@@ -36,6 +36,8 @@ test("forking copies the transcript into a fresh independent web session", async
     fork.entries.map((e) => [e.type, e.payload]),
     source.entries.map((e) => [e.type, e.payload]),
   );
+  assert.deepEqual(fork.session.forkedFrom, { sessionId: sid, title: source.session.title ?? null });
+  assert.equal(fork.session.forkBoundarySeq, fork.entries.at(-1)?.seq);
 
   const mine = await app.listSessions("U1");
   assert.ok(mine.some((s) => s.id === fork.session.id));
@@ -57,6 +59,33 @@ test("upToSeq truncates the copy at the cut point", async () => {
     .map((e) => (e.payload as { text?: string }).text ?? "");
   assert.ok(copiedTexts.some((t) => t.includes("Keep this turn")));
   assert.ok(!copiedTexts.some((t) => t.includes("Drop this turn")));
+  assert.equal(fork.session.forkBoundarySeq, fork.entries.at(-1)?.seq);
+});
+
+test("a single-entry fork (boundary seq 0) still records provenance", async () => {
+  const { app } = freshApp();
+  const r = await app.turn(dm("Only the opening message survives the cut", "web:U1:seq0"));
+  const sid = r.sessionId!;
+  const first = (await app.getSession(sid))!.entries[0]!;
+  const fork = await app.forkSession(sid, "U1", { upToSeq: first.seq });
+  assert.ok(fork);
+  assert.equal(fork.entries.length, 1);
+  assert.equal(fork.entries[0]!.seq, 0, "entry seqs are 0-based");
+  assert.deepEqual(fork.session.forkedFrom, {
+    sessionId: sid,
+    title: (await app.getSession(sid))!.session.title ?? null,
+  });
+  assert.equal(fork.session.forkBoundarySeq, 0);
+});
+
+test("an empty fork has no provenance", async () => {
+  const { app } = freshApp();
+  const r = await app.turn(dm("Nothing before zero", "web:U1:empty"));
+  const fork = await app.forkSession(r.sessionId!, "U1", { upToSeq: -1 });
+  assert.ok(fork);
+  assert.equal(fork.entries.length, 0);
+  assert.equal(fork.session.forkedFrom, undefined);
+  assert.equal(fork.session.forkBoundarySeq, undefined);
 });
 
 test("the fork inherits a marked title and the original keeps its own history", async () => {

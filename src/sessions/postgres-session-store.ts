@@ -36,7 +36,7 @@ import {
   userMessagePreview,
 } from "./session-store.ts";
 
-function rowToSession(r: Record<string, unknown>): Session {
+export function rowToSession(r: Record<string, unknown>): Session {
   return {
     id: r.id as string,
     type: r.type as SessionType,
@@ -46,6 +46,15 @@ function rowToSession(r: Record<string, unknown>): Session {
     createdAt: Number(r.created_at),
     ...(r.title != null ? { title: r.title as string } : {}),
     ...(r.channel_name != null ? { channelName: r.channel_name as string } : {}),
+    ...(r.forked_from_session_id != null && r.fork_boundary_seq != null
+      ? {
+          forkedFrom: {
+            sessionId: r.forked_from_session_id as string,
+            ...(r.forked_from_title != null ? { title: r.forked_from_title as string } : {}),
+          },
+          forkBoundarySeq: Number(r.fork_boundary_seq),
+        }
+      : {}),
   };
 }
 
@@ -169,6 +178,15 @@ export function createPostgresSessionStore(connectionString: string, opts: Store
     `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_activity BIGINT`,
     `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS messages INT`,
     `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS turns INT`,
+    `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS forked_from_session_id TEXT`,
+    `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS forked_from_title TEXT`,
+    `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS fork_boundary_seq INT`,
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sessions_fork_provenance_pair') THEN
+         ALTER TABLE sessions ADD CONSTRAINT sessions_fork_provenance_pair
+         CHECK ((forked_from_session_id IS NULL) = (fork_boundary_seq IS NULL)) NOT VALID;
+       END IF;
+     END $$`,
     `CREATE TABLE IF NOT EXISTS session_entries(
         session_id TEXT NOT NULL, seq INT NOT NULL, parent_seq INT,
         type TEXT NOT NULL, payload TEXT, scope_label TEXT NOT NULL, created_at BIGINT NOT NULL,
@@ -341,6 +359,13 @@ export function createPostgresSessionStore(connectionString: string, opts: Store
 
     async updateTitle(sessionId, title): Promise<void> {
       await q("UPDATE sessions SET title = $2 WHERE id = $1", [sessionId, title]);
+    },
+
+    async updateForkProvenance(sessionId, provenance): Promise<void> {
+      await q(
+        "UPDATE sessions SET forked_from_session_id = $2, forked_from_title = $3, fork_boundary_seq = $4 WHERE id = $1",
+        [sessionId, provenance.forkedFrom.sessionId, provenance.forkedFrom.title ?? null, provenance.forkBoundarySeq],
+      );
     },
 
     async acquireLease(sessionId, holder): Promise<LeaseAttempt> {

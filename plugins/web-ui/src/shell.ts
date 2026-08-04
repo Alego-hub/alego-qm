@@ -33,7 +33,7 @@ import { markConnectorConnected } from "./chat";
 import { clearSkillsCache, resyncModelSelection, seedRuntimeConfig } from "./composer";
 import { ensureDeliveryStream, mainConversation, onExitCanvas } from "./conversations";
 import { clearAllDrafts, saveDraft, storedDraft } from "./drafts";
-import { deepLinkPath, parseDeepLink, UI_BASE } from "./deep-link";
+import { deepLinkPath, isPlainLeftClick, parseDeepLink, UI_BASE } from "./deep-link";
 import {
   addBlankPane,
   canvasToast,
@@ -483,14 +483,14 @@ export function mountShell(): void {
 export function renderSidebarTop(): void {
   if (!appState.topEl) return;
   const navRow = (v: View, glyph: IconNode, label: string) =>
-    html`<button
+    html`<a
       class="navrow ${appState.currentView === v ? "active" : ""}"
-      type="button"
+      href=${deepLinkPath(UI_BASE, v, null)}
       data-view=${v}
       title=${label}
     >
       ${icon(glyph, 17)}<span>${label}</span>
-    </button>`;
+    </a>`;
   const navGroup = (id: string, title: string, open: boolean, toggle: () => void, rows: TemplateResult) => html`
     <button
       class="nav-section-toggle"
@@ -559,12 +559,13 @@ export function renderSidebarTop(): void {
 
 function onNavClick(e: Event): void {
   const target = e.target as Element | null;
-  const row = target?.closest<HTMLButtonElement>(".navrow[data-view]");
+  const row = target?.closest<HTMLAnchorElement>(".navrow[data-view]");
   const view = row?.dataset.view;
-  if (isView(view)) {
-    switchView(view);
-    closeSidebarOnNarrowView();
-  }
+  if (!isView(view)) return;
+  if (e instanceof MouseEvent && !isPlainLeftClick(e)) return;
+  e.preventDefault();
+  switchView(view);
+  closeSidebarOnNarrowView();
 }
 
 export function switchView(v: View): void {

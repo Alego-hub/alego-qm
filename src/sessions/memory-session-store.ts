@@ -101,6 +101,11 @@ export function createMemorySessionStore(opts: StoreOptions = {}): SessionStore 
       if (s) s.title = title;
     },
 
+    async updateForkProvenance(sessionId, provenance) {
+      const s = sessions.get(sessionId);
+      if (s) Object.assign(s, provenance);
+    },
+
     async acquireLease(sessionId, holder): Promise<LeaseAttempt> {
       const held = leases.get(sessionId);
       if (held && now() < held.expiresAt)

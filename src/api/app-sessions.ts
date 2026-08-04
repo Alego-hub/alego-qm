@@ -433,16 +433,24 @@ export function createSessionMethods(
         );
         const { lease } = await deps.sessions.acquireLease(forked.id, "fork");
         if (!lease) throw new Error(`fork: could not lease fresh session ${forked.id}`);
+        let forkBoundarySeq: number | null = null;
         try {
           for (const entry of copied) {
-            await deps.sessions.append(lease, {
+            const appended = await deps.sessions.append(lease, {
               type: entry.type,
               payload: entry.payload,
               scopeLabel: entry.scopeLabel,
             });
+            forkBoundarySeq = appended.seq;
           }
         } finally {
           await deps.sessions.releaseLease(lease);
+        }
+        if (forkBoundarySeq !== null) {
+          await deps.sessions.updateForkProvenance(forked.id, {
+            forkedFrom: { sessionId, title: source.title ?? null },
+            forkBoundarySeq,
+          });
         }
         const sourceTitle = source.title?.trim();
         if (sourceTitle && projectMembers === undefined)

@@ -15,7 +15,9 @@ test("a cron row is a real link to its own path", () => {
 });
 
 test("modified clicks fall through to the browser so open-in-tab and save-link still work", () => {
-  assert.match(source, /event\.metaKey \|\| event\.ctrlKey \|\| event\.shiftKey \|\| event\.altKey \|\| event\.button/);
+  const deepLink = readFileSync(new URL("../src/deep-link.ts", import.meta.url), "utf8");
+  assert.match(deepLink, /e\.metaKey \|\| e\.ctrlKey \|\| e\.shiftKey \|\| e\.altKey \|\| e\.button !== 0/);
+  assert.match(source, /if \(!isPlainLeftClick\(event\)\) return;/);
 });
 
 test("opening a cron from the list pushes history, so Back returns to the list", () => {

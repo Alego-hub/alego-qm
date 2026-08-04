@@ -46,6 +46,10 @@ interface ChatState {
   transcriptAnchorSeq: number | null;
   earlierCount: number;
   loadingEarlier: boolean;
+  forkSession: CoreSession | null;
+  inheritedMessages: ReturnType<typeof entriesToMessages>;
+  inheritedExpanded: boolean;
+  inheritedLoaded: boolean;
 }
 
 export interface ChatSurface {
@@ -61,16 +65,19 @@ export interface ChatSurface {
     scopeId: string | null,
     messages: ReturnType<typeof entriesToMessages>,
     contextName?: string | null,
+    session?: CoreSession,
+    inheritedMessages?: ReturnType<typeof entriesToMessages>,
   ): void;
   mountReadOnly(
     s: CoreSession,
     messages: ReturnType<typeof entriesToMessages>,
     earlierCount?: number,
     anchorSeq?: number | null,
+    inheritedMessages?: ReturnType<typeof entriesToMessages>,
   ): void;
   mountLoadingPane(): void;
   drawActiveChat(agent?: Agent | null, opts?: { forceScroll?: boolean }): void;
-  setTranscriptWindow(anchorSeq: number | null, earlierCount: number): void;
+  setTranscriptWindow(anchorSeq: number | null, earlierCount: number, hasEarlier?: boolean): void;
   requestBackgroundPanel(sessionId: string | null, threadRef: string | null): void;
   activePendingApprovals(): PendingApproval[];
   hasUnresolvedApproval(): boolean;

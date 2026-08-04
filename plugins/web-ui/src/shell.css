@@ -8,6 +8,9 @@
   --radius-md: 10px;
   --radius-lg: 16px;
   --chat-pad: 22px;
+  /* Height reserved at the bottom of every chat message for its own hover footer; it doubles
+     as the rhythm between message blocks. */
+  --meta-lane: 18px;
   --brand-accent: #4f46e5;
   --dev-accent: #8a5a00;
   --brand-mark: "A";
@@ -234,6 +237,11 @@ body.resizing-sidebar {
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+a.navrow,
+a.session,
+a.chat-row-open {
+  text-decoration: none;
 }
 .navrow {
   display: flex;
@@ -1065,8 +1073,38 @@ body.resizing-sidebar {
   min-height: 0;
   overflow-y: auto;
 
-  padding: 28px var(--chat-pad) 26px;
+  padding: 28px var(--chat-pad) 8px;
   scroll-behavior: smooth;
+}
+
+.fork-origin-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 8px 0 14px;
+}
+
+.fork-origin-badge,
+.fork-origin-toggle {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.fork-origin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+}
+
+.fork-origin-toggle {
+  padding: 4px 7px;
 }
 
 .earlier-messages {
@@ -1099,7 +1137,9 @@ body.resizing-sidebar {
   display: flex;
   flex-direction: column;
 
-  gap: 14px;
+  /* The space between blocks lives in each row's reserved meta lane (see .message-row), so the
+     stack adds none of its own — a hover footer can never overhang the block below. */
+  gap: 0;
 }
 .empty-stack {
   justify-content: center;
@@ -1118,6 +1158,11 @@ body.resizing-sidebar {
   display: flex;
   min-width: 0;
   position: relative;
+  /* A lane at the bottom of every row that belongs to that row's own hover footer. It doubles
+     as the rhythm between blocks, so reserving it costs almost no height — and because the
+     footer paints inside its own row, it can never overlay the block below (most visibly a
+     collapsed 'Worked for Ns' header). Revealing the footer still changes no layout. */
+  padding-bottom: var(--meta-lane);
 }
 .user-row {
   flex-direction: column;
@@ -1138,40 +1183,27 @@ body.resizing-sidebar {
   border: 1px dashed var(--border);
 }
 
+/* The hover footer (timestamp + copy/fork) sits in its row's reserved bottom lane: out of flow,
+   so revealing it never reflows, but inside the row's own box, so it never paints over the next
+   block and needs no opaque backing. The lane is part of the row, so no hover bridge is needed
+   to reach it either. pointer-events (not visibility) gates interaction, so the buttons stay
+   keyboard-focusable while hidden — that is what lets :focus-within reveal the footer. */
 .message-meta {
   position: absolute;
-  top: 100%;
+  bottom: 0;
   left: 0;
   z-index: 2;
-  margin-top: 2px;
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
+  height: var(--meta-lane);
   padding: 0 2px;
   border-radius: 6px;
-  background: var(--background);
   color: var(--muted-foreground);
   font-size: 11px;
   opacity: 0;
   pointer-events: none;
-  /* The ::before bridge below is what keeps the footer reachable; the hide itself stays
-     near-instant, because the footer overhangs the next row and any lingering paints on
-     top of content the pointer has already moved on to. pointer-events (not visibility)
-     gates interaction so the buttons stay keyboard-focusable while hidden, which is what
-     lets :focus-within reveal the footer at all. */
   transition: opacity 0.12s ease;
-}
-/* Invisible hover bridge over the 2px gap between the row and the footer (plus a little
-   slack), so crossing the gap never drops the row's :hover — while it's crossed, the
-   footer is a hovered ancestor's child and stays interactive. */
-.message-meta::before {
-  content: "";
-  position: absolute;
-  left: -4px;
-  right: -4px;
-  top: -4px;
-  height: 4px;
 }
 .user-row .message-meta {
   left: auto;
@@ -1186,16 +1218,12 @@ body.resizing-sidebar {
   pointer-events: auto;
 }
 
+/* Hoverless (touch) devices can't reveal the footer, and a tap can't focus a control that
+   ignores pointer events — so there it simply stays visible in its lane. */
 @media (hover: none) {
   .message-meta {
-    position: static;
-    margin-top: 2px;
-    background: transparent;
     opacity: 1;
     pointer-events: auto;
-  }
-  .message-meta::before {
-    display: none;
   }
 }
 .message-time {
@@ -4112,7 +4140,7 @@ body.resizing-sidebar {
     padding: var(--surface-safe-top) max(10px, env(safe-area-inset-right)) 0 max(10px, env(safe-area-inset-left));
   }
   .message-stack {
-    gap: 20px;
+    gap: 6px;
   }
   .chat-scroll {
     padding-right: max(var(--chat-pad), env(safe-area-inset-right));
@@ -6654,10 +6682,13 @@ h3.ambient-field-label {
 }
 
 [data-density="compact"] .chat-scroll {
-  padding: 14px 14px 18px;
+  padding: 14px 14px 4px;
+}
+[data-density="compact"] .message-row {
+  --meta-lane: 16px;
 }
 [data-density="compact"] .message-stack {
-  gap: 10px;
+  gap: 0;
   font-size: 13.5px;
 }
 [data-density="compact"] .live-work-detail {
