@@ -1,9 +1,11 @@
 import { modelSupportedByHarness, resolveModel, SELECTABLE_BASE_MODELS } from "./pi-models.ts";
+import { customModelCatalog, customProvidersVersion } from "./custom-providers.ts";
 
 export interface ModelCatalogEntry {
   id: string;
   name: string;
-  provider: "anthropic" | "openai" | "openrouter";
+  /** A built-in provider or the slug of an admin-registered custom provider. */
+  provider: string;
 }
 
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models?supported_parameters=tools&sort=most-popular";
@@ -14,6 +16,7 @@ const CACHE_TTL_MS = 5 * 60_000;
 const FAILURE_TTL_MS = 30_000;
 
 interface CacheEntry {
+  customVersion?: number;
   expiresAt: number;
   models: ModelCatalogEntry[];
   inFlight?: Promise<ModelCatalogEntry[]>;
@@ -22,12 +25,14 @@ interface CacheEntry {
 const cache = new WeakMap<typeof fetch, CacheEntry>();
 
 export function builtInModelCatalog(): ModelCatalogEntry[] {
-  return SELECTABLE_BASE_MODELS.flatMap((model) => {
+  const builtIns = SELECTABLE_BASE_MODELS.flatMap((model) => {
     const provider = resolveModel(model.id)?.provider;
     return provider === "anthropic" || provider === "openai" || provider === "openrouter"
-      ? [{ ...model, provider }]
+      ? [{ ...model, provider: provider as string }]
       : [];
   });
+  const known = new Set(builtIns.map((model) => model.id));
+  return [...builtIns, ...customModelCatalog().filter((model) => !known.has(model.id))];
 }
 
 async function boundedJson(response: Response): Promise<unknown> {
@@ -77,7 +82,10 @@ async function fetchOpenRouterModels(fetcher: typeof fetch): Promise<ModelCatalo
 export async function selectableModelCatalog(fetcher: typeof fetch = fetch): Promise<ModelCatalogEntry[]> {
   const now = Date.now();
   const existing = cache.get(fetcher);
-  if (existing && existing.expiresAt > now) return existing.models;
+  // A registry change (admin registered/removed a custom provider) must be
+  // visible in the next picker load, not after the TTL runs out.
+  if (existing && existing.expiresAt > now && existing.customVersion === customProvidersVersion())
+    return existing.models;
   if (existing?.inFlight) return existing.inFlight;
   const entry = existing ?? { expiresAt: 0, models: [] };
   entry.inFlight = fetchOpenRouterModels(fetcher)
@@ -86,11 +94,13 @@ export async function selectableModelCatalog(fetcher: typeof fetch = fetch): Pro
       const known = new Set(models.map((model) => model.id));
       entry.models = [...models, ...dynamic.filter((model) => !known.has(model.id))];
       entry.expiresAt = Date.now() + CACHE_TTL_MS;
+      entry.customVersion = customProvidersVersion();
       return entry.models;
     })
     .catch(() => {
       entry.models = entry.models.length ? entry.models : builtInModelCatalog();
       entry.expiresAt = Date.now() + FAILURE_TTL_MS;
+      entry.customVersion = customProvidersVersion();
       return entry.models;
     })
     .finally(() => {
