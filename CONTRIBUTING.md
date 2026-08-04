@@ -11,4 +11,6 @@ Please do not have AI artificially expand what you'd like to do into a formal pr
 
 Submit changes as a PR adding a `.txt` or `.md` file to the [`adrs/`](./adrs/) folder.
 
+For bugs, just open an issue. We appreciate this a lot, and will credit you as co-author on the commit if we merge a fix.
+
 PS: Report any security vulnerabilities privately — see [`SECURITY.md`](./SECURITY.md), not a public issue.
