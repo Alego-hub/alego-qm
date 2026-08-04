@@ -958,6 +958,7 @@ describe("/v1/keychain routes (capability-authed)", () => {
       workspace: built.workspace,
       auditLog: built.auditLog,
       credentialUsage: built.credentialUsage,
+      sessions: built.sessions,
     });
     await new Promise<void>((resolve) => server.listen(0, resolve));
     base = `http://localhost:${(server.address() as AddressInfo).port}`;
@@ -1156,6 +1157,31 @@ describe("/v1/keychain routes (capability-authed)", () => {
     assert.equal(body.grants[0].purpose, "deploy the reporting app");
     assert.equal(body.usage[0].credentialId, credential.id);
     assert.ok(!JSON.stringify(body).includes("never-return-this"));
+  });
+
+  it("overview resolves grant scope ids to human-readable names when known", async () => {
+    const owner = "SCOPENAME_OWNER";
+    const { credential } = (await (
+      await post(
+        "/v1/keychain/credentials",
+        { service: "scopenames", secret: "shh", envKey: "SCOPENAME_TOKEN" },
+        await capFor(owner),
+      )
+    ).json()) as any;
+    await built.sessions.getOrCreateByThread("slack:C_NAMED:1", "channel", "channel:C_NAMED", "pilot-portal");
+    await post(
+      "/v1/keychain/grants",
+      { credential: credential.id, mode: "standing", purpose: "named channel work" },
+      await capFor(owner, "channel:C_NAMED"),
+    );
+    await post(
+      "/v1/keychain/grants",
+      { credential: credential.id, mode: "standing", purpose: "unnamed channel work" },
+      await capFor(owner, "channel:C_MYSTERY"),
+    );
+    const body = (await (await get("/v1/keychain/overview", await capFor(owner))).json()) as any;
+    assert.equal(body.scopeNames["channel:C_NAMED"], "#pilot-portal");
+    assert.equal(body.scopeNames["channel:C_MYSTERY"], undefined);
   });
 
   it("overview includes safe connector metadata so its grants remain visible and revocable", async () => {

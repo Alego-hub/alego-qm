@@ -132,6 +132,7 @@ let keychainConnectorCredentials: KeychainConnectorCredential[] = [];
 let keychainGrants: KeychainGrant[] = [];
 let keychainAsks: KeychainAsk[] = [];
 let keychainUsage: KeychainUsage[] = [];
+let keychainScopeNames: Record<string, string> = {};
 let connectorNotice = "";
 let addingCredential: { service: string; envKey: string; purpose: string } | null = null;
 let secureDropUrl: string | null = null;
@@ -147,6 +148,7 @@ export function resetKeychainState(): void {
   keychainGrants = [];
   keychainAsks = [];
   keychainUsage = [];
+  keychainScopeNames = {};
   connectorNotice = "";
   addingCredential = null;
   secureDropUrl = null;
@@ -245,10 +247,28 @@ function credentialCard(c: KeychainCredential): TemplateResult {
   `;
 }
 
+// Raw Slack IDs (C0…, G0…) mean nothing to people — always prefer a resolved
+// name, and fall back to a human description. The raw ID appears only as a
+// parenthetical of last resort, to disambiguate when no name is available.
 function scopeName(scope: string): string {
+  const resolved = keychainScopeNames[scope];
+  if (resolved) return resolved;
   const [kind, ...rest] = scope.split(":");
-  const name = rest.join(":");
-  return `${kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : "Context"}: ${name}`;
+  const ref = rest.join(":");
+  switch (kind) {
+    case "personal":
+      return ref || "a personal DM";
+    case "channel":
+      return ref ? `a Slack channel (${ref})` : "a Slack channel";
+    case "group":
+      return "a group DM";
+    case "team":
+      return ref ? `a team (${ref})` : "a team";
+    case "org":
+      return "the whole org";
+    default:
+      return scope;
+  }
 }
 
 function addCredentialCard(): TemplateResult {
@@ -604,6 +624,7 @@ export async function renderConnectors(): Promise<void> {
       grants?: KeychainGrant[];
       asks?: KeychainAsk[];
       usage?: KeychainUsage[];
+      scopeNames?: Record<string, string>;
     }>("/api/keychain/overview"),
   ]);
   if (seq !== appState.viewRenderSeq || !keychainOperations.isCurrentLoad(load) || appState.currentView !== "keychain")
@@ -623,12 +644,14 @@ export async function renderConnectors(): Promise<void> {
     keychainGrants = keys.value.grants ?? [];
     keychainAsks = keys.value.asks ?? [];
     keychainUsage = keys.value.usage ?? [];
+    keychainScopeNames = keys.value.scopeNames ?? {};
   } else {
     keychainCredentials = [];
     keychainConnectorCredentials = [];
     keychainGrants = [];
     keychainAsks = [];
     keychainUsage = [];
+    keychainScopeNames = {};
     notices.push(errMessage(keys.reason, "Failed to load stored keys."));
   }
   if (notices.length) connectorNotice = notices.join(" ");
