@@ -83,6 +83,29 @@ plaintext credentials while a process is using them. An approval means a human
 accepted the displayed action under the information available at that time, not that
 the resulting behavior is safe.
 
+### Deliberately portal-only actions
+
+Three actions are intentionally excluded from the agent self-API, even though the
+web portal offers them. They look like capability-parity gaps in an audit; they are
+walls, not gaps, and should not be "fixed" without revisiting the reasoning here.
+
+- **Admin grant changes.** Granting or revoking org-admin rights happens only in the
+  portal, on an authenticated admin's own turn. If the agent could change grants, a
+  prompt-injected or compromised agent process could escalate its own operator's
+  privileges — or demote everyone else's.
+- **Impersonation.** The agent always acts as the principal resolved for the turn.
+  There is no self-API route to act as a different principal, because every
+  authorization decision downstream keys off that identity; a switchable identity
+  would turn one confused turn into another person's authority.
+- **Command-approval decisions.** Approving a gated command is a human judgment made
+  on the approver's own turn. An agent-reachable approval route would collapse the
+  human-in-the-loop gate into a single model decision, which is exactly what the
+  gate exists to prevent.
+
+The common shape: each is a decision that authorizes _future_ agent behavior, so the
+decision itself must come from outside the agent. Parity work should route around
+these, not through them.
+
 ### Known limitations
 
 - **Command policy is bypassable.** It classifies shell text and catches configured or
