@@ -59,3 +59,8 @@ export function parseDeepLink(
 export function sessionLink(origin: string, base: string, sessionId: string): string {
   return `${origin}${deepLinkPath(base, "chats", sessionId)}`;
 }
+
+/** True for an unmodified left click — the case an in-app link should handle itself (SPA nav). Modified clicks (cmd/ctrl/shift/alt, middle-click) fall through to the browser so "open in new tab" works. */
+export function isPlainLeftClick(e: MouseEvent): boolean {
+  return !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0);
+}

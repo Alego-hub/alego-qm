@@ -5,7 +5,7 @@ import test from "node:test";
 const chat = readFileSync(new URL("../src/chat.ts", import.meta.url), "utf8");
 
 test("the transcript renders rows through the settled-row cache", () => {
-  assert.match(chat, /messages\.map\(\(m, i\) =>\s*settledChatMessage\(m, i,/);
+  assert.match(chat, /messages\.map\(\(m, i\) =>\s*settledChatMessage\(m, i - inheritedOffset,/);
 });
 
 test("live or approval-paused rows bypass the cache (their render reads mutable state)", () => {

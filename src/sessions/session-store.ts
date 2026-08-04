@@ -416,6 +416,10 @@ export interface SessionStore {
   get(sessionId: string): Promise<Session | null>;
 
   updateTitle(sessionId: string, title: string): Promise<void>;
+  updateForkProvenance(
+    sessionId: string,
+    provenance: { forkedFrom: { sessionId: string; title?: string | null }; forkBoundarySeq: number },
+  ): Promise<void>;
 
   acquireLease(sessionId: string, holder?: LeaseHolder): Promise<LeaseAttempt>;
   releaseLease(lease: Lease): Promise<void>;

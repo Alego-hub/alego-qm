@@ -97,6 +97,24 @@ export function withPendingSession(list: CoreSession[], pending: CoreSession): C
   return [pending, ...list.filter((s) => s.threadRef !== pending.threadRef)];
 }
 
+/** An unsent new chat the user walked away from, with nothing worth keeping. */
+export function isAbandonedNewChat(state: {
+  threadRef: string | null;
+  nextThreadRef: string | null;
+  sessionId: string | null;
+  pendingSend: string | null;
+  hasHumanMessage: boolean;
+  draft: string;
+  attachments: number;
+}): boolean {
+  const ref = state.threadRef;
+  if (!ref || ref === state.nextThreadRef) return false;
+  if (state.sessionId !== null || state.pendingSend === ref) return false;
+  if (state.hasHumanMessage) return false;
+  if (state.draft.trim() || state.attachments > 0) return false;
+  return true;
+}
+
 export function withoutUnsentPending(list: CoreSession[], threadRef: string): CoreSession[] {
   return list.filter((s) => s.id !== "" || s.threadRef !== threadRef);
 }

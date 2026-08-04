@@ -7,7 +7,7 @@ import { listBackLink, listPageTpl } from "./list-page";
 import { ensureContexts, scopeChip } from "./contexts";
 import { appState } from "./shell";
 import { mainConversation } from "./conversations";
-import { deepLinkPath, UI_BASE } from "./deep-link";
+import { deepLinkPath, isPlainLeftClick, UI_BASE } from "./deep-link";
 import {
   cronNextFire,
   cronRunSummary,
@@ -339,7 +339,7 @@ function cronPageRow(c: CronView, mine: boolean): TemplateResult {
         class="cron-row-main"
         href=${deepLinkPath(UI_BASE, "crons", null, null, c.id)}
         @click=${(event: MouseEvent) => {
-          if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+          if (!isPlainLeftClick(event)) return;
           event.preventDefault();
           openCron(c, { push: true });
         }}

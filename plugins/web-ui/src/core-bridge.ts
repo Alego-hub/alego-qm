@@ -61,6 +61,68 @@ export interface CoreSession {
   awaitingInput?: boolean;
   backgroundJobs?: number;
   watches?: number;
+  forkedFrom?: { sessionId: string; title?: string | null };
+  forkBoundarySeq?: number;
+}
+
+export function inheritedTranscript(
+  session: Pick<CoreSession, "forkedFrom" | "forkBoundarySeq">,
+  entries: SessionEntry[],
+): { inherited: SessionEntry[]; current: SessionEntry[] } {
+  if (!session.forkedFrom || session.forkBoundarySeq === undefined) return { inherited: [], current: entries };
+  const inherited: SessionEntry[] = [];
+  const current: SessionEntry[] = [];
+  for (const entry of entries)
+    (entry.seq !== undefined && entry.seq <= session.forkBoundarySeq ? inherited : current).push(entry);
+  return { inherited, current };
+}
+
+export function inheritedRefreshEntries(
+  session: Pick<CoreSession, "forkedFrom" | "forkBoundarySeq">,
+  entries: SessionEntry[],
+  inheritedLoaded: boolean,
+): SessionEntry[] | null {
+  const inherited = inheritedTranscript(session, entries).inherited;
+  return inherited.length && !inheritedLoaded ? inherited : null;
+}
+
+export function forkOriginDetails(
+  session: Pick<CoreSession, "forkedFrom" | "forkBoundarySeq">,
+  inheritedCount: number,
+): { sessionId: string; title: string; messageCount?: number } | null {
+  if (!session.forkedFrom || session.forkBoundarySeq === undefined) return null;
+  return {
+    sessionId: session.forkedFrom.sessionId,
+    title: session.forkedFrom.title?.trim() || "another conversation",
+    ...(inheritedCount > 0 ? { messageCount: inheritedCount } : {}),
+  };
+}
+
+export function currentEarlierCount(
+  session: Pick<CoreSession, "forkedFrom" | "forkBoundarySeq">,
+  earlierEntries: number,
+): number {
+  if (!session.forkedFrom || session.forkBoundarySeq === undefined) return earlierEntries;
+  return Math.max(0, earlierEntries - (session.forkBoundarySeq + 1));
+}
+
+export async function loadInheritedTranscript(
+  session: Pick<CoreSession, "id" | "forkedFrom" | "forkBoundarySeq">,
+  loaded: SessionEntry[],
+  fetcher: typeof fetchTranscript = fetchTranscript,
+): Promise<SessionEntry[]> {
+  if (loaded.length || !session.forkedFrom || session.forkBoundarySeq === undefined) return loaded;
+  let beforeSeq = session.forkBoundarySeq + 1;
+  let inherited: SessionEntry[] = [];
+  for (;;) {
+    const page = await fetcher(session.id, { beforeSeq, tailTurns: TAIL_TURNS });
+    const entries = inheritedTranscript(session, page.entries ?? []).inherited;
+    inherited = [...entries, ...inherited];
+    const earliestSeq = entries[0]?.seq;
+    if (!(page.earlierEntries ?? 0) || earliestSeq === undefined || earliestSeq <= 0 || earliestSeq >= beforeSeq) break;
+    beforeSeq = earliestSeq;
+  }
+  return inherited;
 }
 
 export interface SessionBackgroundView {

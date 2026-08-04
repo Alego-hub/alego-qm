@@ -28,6 +28,8 @@ import {
   api,
   attachPendingApprovals,
   fetchTranscript,
+  currentEarlierCount,
+  inheritedTranscript,
   isContinuable,
   entriesToMessages,
   regenerateTitle,
@@ -40,7 +42,7 @@ import {
   type CoreProject,
   type CoreSession,
 } from "./core-bridge";
-import { sessionLink, UI_BASE } from "./deep-link";
+import { deepLinkPath, isPlainLeftClick, sessionLink, UI_BASE } from "./deep-link";
 import {
   activityOf,
   chatBrowseStatusMatches,
@@ -617,7 +619,15 @@ function chatPageRow(s: CoreSession): TemplateResult {
       class="list-row chat-row ${active ? "active" : ""} ${s.color ? "colored" : ""}"
       style=${s.color ? `--session-color:${s.color}` : nothing}
     >
-      <button class="chat-row-open" type="button" @click=${() => void openSession(s)}>
+      <a
+        class="chat-row-open"
+        href=${deepLinkPath(UI_BASE, "chats", s.id)}
+        @click=${(e: MouseEvent) => {
+          if (!isPlainLeftClick(e)) return;
+          e.preventDefault();
+          void openSession(s);
+        }}
+      >
         <span class="list-row-title">${statusMarks(s)}${groupDmTitle(s)}</span>
         <span class="list-row-meta">
           ${scopeChip(s.scopeId, s.channelName ?? null)}
@@ -625,7 +635,7 @@ function chatPageRow(s: CoreSession): TemplateResult {
           ${readOnly ? html`<span class="ro-lock" title="Read-only">${icon(Lock, 12)}</span>` : nothing}
           <span class="list-row-date">${listWhen(activityOf(s))}</span>
         </span>
-      </button>
+      </a>
       ${
         s.id
           ? html`<span class="chat-row-actions">
@@ -782,14 +792,19 @@ function sessionRow(s: CoreSession, projectChild = false): TemplateResult {
       class="session-row ${active ? "active" : ""} ${menuOpen ? "menu-open" : ""} ${readOnly ? "read-only" : ""} ${refreshingTitle ? "title-refreshing" : ""} ${working ? "working" : ""} ${s.awaitingInput ? "awaiting-input" : ""} ${projectChild ? "project-child" : ""} ${s.color ? "colored" : ""}"
       style=${s.color ? `--session-color:${s.color}` : nothing}
     >
-      <button
+      <a
         class="session"
+        href=${saved ? deepLinkPath(UI_BASE, "chats", s.id) : nothing}
         aria-busy=${refreshingTitle ? "true" : "false"}
         aria-label=${ariaLabel}
         draggable=${saved ? "true" : "false"}
         @dragstart=${(e: DragEvent) => onSessionDragStart(e, s)}
         @dragend=${() => endSessionDrag()}
-        @click=${() => openSession(s)}
+        @click=${(e: MouseEvent) => {
+          if (saved && !isPlainLeftClick(e)) return;
+          e.preventDefault();
+          void openSession(s);
+        }}
         @dblclick=${(e: Event) => {
           if (!saved) return;
           e.preventDefault();
@@ -802,7 +817,7 @@ function sessionRow(s: CoreSession, projectChild = false): TemplateResult {
             >${titleContent}</span
           >${context ? html`<span class="row-context" title=${context}>${context}</span>` : nothing}
         </div>
-      </button>
+      </a>
       ${
         saved
           ? html`<div class="session-menu">
@@ -1218,15 +1233,17 @@ export async function openSessionInto(
     return;
   }
 
-  const messages = entriesToMessages(entriesRes.entries ?? [], transcriptModel());
-  const earlier = entriesRes.earlierEntries ?? 0;
+  const split = inheritedTranscript(s, entriesRes.entries ?? []);
+  const messages = entriesToMessages(split.current, transcriptModel());
+  const inheritedMessages = entriesToMessages(split.inherited, transcriptModel());
+  const earlier = currentEarlierCount(s, entriesRes.earlierEntries ?? 0);
   const anchorSeq = entriesRes.entries?.[0]?.seq ?? null;
   if (continuable) {
     attachPendingApprovals(messages, approvalsRes?.approvals ?? [], transcriptModel());
-    conv.mountContinuable(s.threadRef, s.id, s.scopeId, messages, s.channelName ?? null);
-    conv.setTranscriptWindow(anchorSeq, earlier);
+    conv.mountContinuable(s.threadRef, s.id, s.scopeId, messages, s.channelName ?? null, s, inheritedMessages);
+    conv.setTranscriptWindow(anchorSeq, earlier, (entriesRes.earlierEntries ?? 0) > 0);
   } else {
-    conv.mountReadOnly(s, messages, earlier, anchorSeq);
+    conv.mountReadOnly(s, messages, earlier, anchorSeq, inheritedMessages);
   }
   renderList();
 }

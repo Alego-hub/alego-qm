@@ -88,6 +88,18 @@ test("a blocked acquire names, dates, and times out the holder it lost to", asyn
 const backends: Array<[string, () => SessionStore]> = [["memory", () => createMemorySessionStore()]];
 
 for (const [name, make] of backends) {
+  test(`${name}: fork provenance is available through get and participant lists`, async () => {
+    const store = make();
+    const scope = scopeId("personal", "U1");
+    const session = await store.getOrCreateByThread("fork", "dm", scope);
+    await store.addParticipant(session.id, "U1");
+    const provenance = { forkedFrom: { sessionId: "source", title: "Original" }, forkBoundarySeq: 7 };
+    await store.updateForkProvenance(session.id, provenance);
+    assert.deepEqual(await store.get(session.id), { ...session, ...provenance });
+    assert.deepEqual((await store.listByParticipant("U1"))[0]?.forkedFrom, provenance.forkedFrom);
+    assert.equal((await store.listByParticipant("U1"))[0]?.forkBoundarySeq, 7);
+  });
+
   test(`${name}: one session per thread (getOrCreateByThread is idempotent)`, async () => {
     const store = make();
     const scope = scopeId("personal", "U1");

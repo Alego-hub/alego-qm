@@ -72,6 +72,8 @@ export interface Session {
   archived?: boolean;
   pinned?: boolean;
   color?: string;
+  forkedFrom?: { sessionId: string; title?: string | null };
+  forkBoundarySeq?: number;
   lastActivityAt?: number;
   hasEntries?: boolean;
   working?: boolean;

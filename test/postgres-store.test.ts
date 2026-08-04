@@ -1,6 +1,6 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import { createPostgresSessionStore } from "../src/sessions/postgres-session-store.ts";
+import { createPostgresSessionStore, rowToSession } from "../src/sessions/postgres-session-store.ts";
 import { createPostgresRunStore } from "../src/runs/postgres-run-store.ts";
 import { scopeId, type Principal, type TurnResult } from "../src/types.ts";
 import type { OrchestratorInput } from "../src/core/orchestrator.ts";
@@ -24,6 +24,33 @@ const turn = (text: string): OrchestratorInput => ({
   conversation: { kind: "dm", threadRef: "t", audience: [actor] },
   origin: { kind: "direct" },
   text,
+});
+
+test("pg session row mapping ignores incomplete fork provenance", () => {
+  const session = rowToSession({
+    id: "fork",
+    type: "dm",
+    scope_id: "personal:U1",
+    thread_ref: "thread",
+    created_at: 1,
+    forked_from_session_id: "source",
+    fork_boundary_seq: null,
+  });
+  assert.equal(session.forkedFrom, undefined);
+  assert.equal(session.forkBoundarySeq, undefined);
+});
+
+test("pg session store: fork provenance survives a store restart", { skip }, async () => {
+  const first = createPostgresSessionStore(URL!);
+  const session = await first.getOrCreateByThread("fork-provenance", "dm", scopeId("personal", "U1"));
+  await first.updateForkProvenance(session.id, {
+    forkedFrom: { sessionId: "source-session", title: "Original" },
+    forkBoundarySeq: 4,
+  });
+  const restarted = createPostgresSessionStore(URL!);
+  const loaded = await restarted.get(session.id);
+  assert.deepEqual(loaded?.forkedFrom, { sessionId: "source-session", title: "Original" });
+  assert.equal(loaded?.forkBoundarySeq, 4);
 });
 
 test("pg session store: one-per-thread, TTL/fenced lease, monotonic log, visibility window", { skip }, async () => {

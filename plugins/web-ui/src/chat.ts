@@ -41,8 +41,13 @@ import {
   entriesToMessages,
   fetchEntry,
   fetchTranscript,
+  currentEarlierCount,
+  forkOriginDetails,
   forkCutSeq,
   forkSession,
+  inheritedRefreshEntries,
+  inheritedTranscript,
+  loadInheritedTranscript,
   makeCoreStreamFn,
   makeOpenerStreamFn,
   makeRunResumeStreamFn,
@@ -82,16 +87,19 @@ import { browserRenderableImage, formatBytes, icon, relTime } from "./ui";
 import { adminSessionLogUrl, appState, can, renderSidebarTop, syncUrlFromState } from "./shell";
 import {
   addPendingSession,
+  dropPendingSession,
   groupDmTitle,
   refreshSessions,
   renderList,
   sessionsState,
   sessionSlackUrl,
   surfaceOf,
+  openSession,
 } from "./sessions";
-import { backgroundLabel, clearWorking, conversationBackground, markWorking } from "./session-list";
+import { backgroundLabel, clearWorking, conversationBackground, isAbandonedNewChat, markWorking } from "./session-list";
 import { liveTurnThreadRef } from "./working-dot";
 import { newChatDraftKey, saveDraft, storedDraft } from "./drafts";
+import { createForkOriginController, forkOriginView } from "./fork-origin";
 
 installMarkdownSanitizer();
 
@@ -122,8 +130,13 @@ export function markConnectorConnected(provider: string): void {
   for (const hook of redrawHooks) hook();
 }
 
-export function createChatSurface(ctx: ConvCtx): ChatSurface {
+export function createChatSurface(
+  ctx: ConvCtx,
+  dependencies: { fetchTranscript?: typeof fetchTranscript; openSession?: typeof openSession } = {},
+): ChatSurface {
   const runSlot = createRunSlot();
+  const transcriptFetcher = dependencies.fetchTranscript ?? fetchTranscript;
+  const sessionOpener = dependencies.openSession ?? openSession;
 
   const chatState = {
     agent: null as Agent | null,
@@ -144,7 +157,37 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
     transcriptAnchorSeq: null as number | null,
     earlierCount: 0,
     loadingEarlier: false,
+    forkSession: null as CoreSession | null,
+    inheritedMessages: [] as ReturnType<typeof entriesToMessages>,
+    inheritedExpanded: false,
+    inheritedLoaded: false,
   };
+  const forkOriginController = createForkOriginController({
+    state: chatState,
+    load: async () => {
+      const session = chatState.forkSession;
+      if (!session) return [];
+      const entries = await loadInheritedTranscript(session, [], transcriptFetcher);
+      return entriesToMessages(entries, transcriptModel());
+    },
+    navigate: async () => {
+      const sourceId = chatState.forkSession?.forkedFrom?.sessionId;
+      if (!sourceId) return;
+      const listed = sessionsState.list.find((session) => session.id === sourceId);
+      const page = await transcriptFetcher(sourceId, { tailTurns: TAIL_TURNS });
+      const source = listed ?? page.session;
+      if (!source) throw new Error("missing source session");
+      await sessionOpener(source, Promise.resolve(page));
+    },
+    current: () => Boolean(chatState.forkSession && chatState.sessionId === chatState.forkSession.id),
+    redraw: () => {
+      if (chatState.agent) drawActiveChat();
+      else readonlyRedraw?.();
+    },
+    setError: (error) => {
+      ctx.composer.state.error = error;
+    },
+  });
 
   let workTicker: ReturnType<typeof setInterval> | null = null;
   let revealedTailLen = 0;
@@ -163,6 +206,7 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
   let readOnlyView: { id: string; threadRef: string; session: CoreSession; anchorSeq: number | null } | null = null;
 
   function teardownActiveChat(): void {
+    forkOriginController.invalidateRefresh();
     readOnlyView = null;
     preserveOutgoingWorkingDot(null);
     detachActiveAgent();
@@ -183,6 +227,7 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
   }
 
   function resetChatState(): void {
+    dropAbandonedNewChat(null);
     teardownActiveChat();
     proactiveOpenerStarted = false;
     chatState.rememberedThreadRef = null;
@@ -200,10 +245,27 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
     const carried = storedDraft(newChatDraftKey(user));
     if (carried) saveDraft(threadRef, carried);
     ctx.composer.resetComposer();
+    forkOriginController.reset();
     mountContinuable(threadRef, null, context?.scopeId ?? null, [], context?.name ?? null);
     renderList();
     ctx.composer.focusComposerEnd();
     return threadRef;
+  }
+
+  function dropAbandonedNewChat(nextThreadRef: string | null): void {
+    const ref = chatState.threadRef;
+    if (
+      isAbandonedNewChat({
+        threadRef: ref,
+        nextThreadRef,
+        sessionId: chatState.sessionId,
+        pendingSend: chatState.pendingSend,
+        hasHumanMessage: (chatState.agent?.state.messages ?? []).some((m) => !(m as { opener?: boolean }).opener),
+        draft: ctx.composer.state.draft || storedDraft(ref ?? ""),
+        attachments: ctx.composer.state.attachments.length,
+      })
+    )
+      dropPendingSession(ref!);
   }
 
   function preserveOutgoingWorkingDot(nextThreadRef: string | null): void {
@@ -228,17 +290,25 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
     scopeId: string | null,
     messages: ReturnType<typeof entriesToMessages>,
     contextName: string | null = null,
+    session?: CoreSession,
+    inheritedMessages: ReturnType<typeof entriesToMessages> = [],
   ): void {
     const container = ctx.claimContainer();
     if (!container) return;
     readOnlyView = null;
     preserveOutgoingWorkingDot(threadRef);
+    dropAbandonedNewChat(threadRef);
     detachActiveAgent();
     ctx.composer.resetComposer();
+    forkOriginController.reset();
     chatState.threadRef = threadRef;
     chatState.sessionId = sessionId;
     chatState.scopeId = scopeId;
     chatState.contextName = contextName;
+    chatState.forkSession = session ?? null;
+    chatState.inheritedMessages = inheritedMessages;
+    chatState.inheritedExpanded = false;
+    chatState.inheritedLoaded = !session?.forkedFrom;
     chatState.rememberedThreadRef = threadRef;
     chatState.rememberedSessionId = sessionId;
     chatState.rememberedScopeId = scopeId;
@@ -377,18 +447,39 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
     };
   }
 
+  function inheritedHeader(): TemplateResult | typeof nothing {
+    const origin = chatState.forkSession
+      ? forkOriginDetails(chatState.forkSession, chatState.inheritedLoaded ? chatState.inheritedMessages.length : 0)
+      : null;
+    return forkOriginView(
+      origin
+        ? {
+            title: origin.title,
+            messageCount: origin.messageCount,
+            expanded: chatState.inheritedExpanded,
+            icon: icon(GitFork, 14),
+            navigate: () => void forkOriginController.navigate(),
+            toggle: () => void forkOriginController.toggle().catch(() => {}),
+          }
+        : null,
+    );
+  }
+
   function onDelivery(threadRef: string): void {
     const ro = readOnlyView;
     if (ro && threadRef === ro.threadRef) {
       void fetchTranscript(ro.id, ro.anchorSeq !== null ? { sinceSeq: ro.anchorSeq } : { tailTurns: TAIL_TURNS })
         .then((page) => {
           if (readOnlyView?.id !== ro.id) return;
-          const earlier = page.earlierEntries ?? 0;
+          const split = inheritedTranscript(ro.session, page.entries ?? []);
+          const rawEarlier = page.earlierEntries ?? 0;
+          const earlier = currentEarlierCount(ro.session, rawEarlier);
           mountReadOnly(
             readOnlyView.session,
-            entriesToMessages(page.entries ?? [], transcriptModel()),
+            entriesToMessages(split.current, transcriptModel()),
             earlier,
-            earlier > 0 ? (page.entries?.[0]?.seq ?? null) : null,
+            rawEarlier > 0 ? (page.entries?.[0]?.seq ?? null) : null,
+            entriesToMessages(split.inherited, transcriptModel()),
           );
         })
         .catch(() => {});
@@ -480,13 +571,30 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
   async function refreshTranscriptFromEntries(agent: Agent): Promise<void> {
     const sessionId = chatState.sessionId;
     if (!sessionId || agent !== chatState.agent || agent.state.isStreaming) return drawActiveChat(agent);
+    const generation = forkOriginController.beginRefresh();
     const last = agent.state.messages[agent.state.messages.length - 1] as { stopReason?: string } | undefined;
     if (last?.stopReason === "error" || last?.stopReason === "aborted") return drawActiveChat(agent);
     try {
       const anchor = chatState.transcriptAnchorSeq;
-      const page = await fetchTranscript(sessionId, anchor !== null ? { sinceSeq: anchor } : undefined);
-      if (agent !== chatState.agent || agent.state.isStreaming) return;
-      const messages = entriesToMessages(page.entries ?? [], transcriptModel());
+      const page = await transcriptFetcher(sessionId, anchor !== null ? { sinceSeq: anchor } : undefined);
+      if (
+        !forkOriginController.isCurrentRefresh(generation) ||
+        sessionId !== chatState.sessionId ||
+        agent !== chatState.agent ||
+        agent.state.isStreaming
+      )
+        return;
+      const split = inheritedTranscript(chatState.forkSession ?? {}, page.entries ?? []);
+      const messages = entriesToMessages(split.current, transcriptModel());
+      const refreshedInherited = inheritedRefreshEntries(
+        chatState.forkSession ?? {},
+        page.entries ?? [],
+        chatState.inheritedLoaded,
+      );
+      forkOriginController.applyRefresh(
+        generation,
+        refreshedInherited ? entriesToMessages(refreshedInherited, transcriptModel()) : null,
+      );
       try {
         const r = await api<{ approvals: PendingApproval[] }>(
           `/api/sessions/${encodeURIComponent(sessionId)}/approvals`,
@@ -495,10 +603,17 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
       } catch {
         void 0;
       }
-      if (agent !== chatState.agent || agent.state.isStreaming) return;
+      if (
+        !forkOriginController.isCurrentRefresh(generation) ||
+        sessionId !== chatState.sessionId ||
+        agent !== chatState.agent ||
+        agent.state.isStreaming
+      )
+        return;
       agent.state.messages = messages;
-      chatState.earlierCount = page.earlierEntries ?? 0;
-      chatState.transcriptAnchorSeq = chatState.earlierCount > 0 ? (page.entries?.[0]?.seq ?? null) : null;
+      const rawEarlier = page.earlierEntries ?? 0;
+      chatState.earlierCount = currentEarlierCount(chatState.forkSession ?? {}, rawEarlier);
+      chatState.transcriptAnchorSeq = rawEarlier > 0 ? (page.entries?.[0]?.seq ?? null) : null;
     } catch {
       void 0;
     }
@@ -627,18 +742,28 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
     messages: ReturnType<typeof entriesToMessages>,
     earlierCount = 0,
     anchorSeq: number | null = null,
+    inheritedMessages: ReturnType<typeof entriesToMessages> = [],
   ): void {
     const container = ctx.claimContainer();
     if (!container) return;
     preserveOutgoingWorkingDot(s.threadRef);
+    dropAbandonedNewChat(s.threadRef);
     detachActiveAgent();
     chatState.agent = null;
     clearLiveWork();
     chatState.host = null;
     ctx.composer.resetComposer();
+    const sameSession = chatState.sessionId === s.id && chatState.threadRef === null;
+    if (!sameSession) forkOriginController.reset();
     chatState.threadRef = null;
     chatState.sessionId = s.id;
     chatState.scopeId = s.scopeId;
+    chatState.forkSession = s;
+    if (!(sameSession && chatState.inheritedLoaded)) {
+      chatState.inheritedMessages = inheritedMessages;
+      chatState.inheritedLoaded = !s.forkedFrom;
+    }
+    if (!sameSession) chatState.inheritedExpanded = false;
     syncLocation();
 
     resetBackgroundPanel();
@@ -670,6 +795,7 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
             ${backgroundActivityStrip()}
             <section class="chat-scroll readonly-scroll">
               <div class="message-stack">
+                ${inheritedHeader()}
                 ${
                   earlierCount > 0
                     ? html`<div class="earlier-messages">
@@ -688,12 +814,18 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
                               const scroller = container?.querySelector<HTMLElement>(".chat-scroll");
                               const priorHeight = scroller?.scrollHeight ?? 0;
                               const priorTop = scroller?.scrollTop ?? 0;
-                              const remaining = page.earlierEntries ?? 0;
+                              const rawRemaining = page.earlierEntries ?? 0;
+                              const remaining = currentEarlierCount(s, rawRemaining);
+                              const split = inheritedTranscript(s, page.entries ?? []);
                               mountReadOnly(
                                 s,
-                                [...entriesToMessages(page.entries ?? [], transcriptModel()), ...messages],
+                                [...entriesToMessages(split.current, transcriptModel()), ...messages],
                                 remaining,
-                                remaining > 0 ? (page.entries?.[0]?.seq ?? null) : null,
+                                rawRemaining > 0 ? (page.entries?.[0]?.seq ?? null) : null,
+                                [
+                                  ...entriesToMessages(split.inherited, transcriptModel()),
+                                  ...chatState.inheritedMessages,
+                                ],
                               );
                               requestAnimationFrame(() => {
                                 const scrollerNow = container?.querySelector<HTMLElement>(".chat-scroll");
@@ -711,7 +843,14 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
                       </div>`
                     : nothing
                 }
-                ${messages.length ? messages.map((m, i) => chatMessage(m, i)) : html`<div class="empty compact">No readable messages in this conversation.</div>`}
+                ${
+                  (chatState.inheritedExpanded ? [...chatState.inheritedMessages, ...messages] : messages).length
+                    ? (chatState.inheritedExpanded ? [...chatState.inheritedMessages, ...messages] : messages).map(
+                        (m, i) => chatMessage(m, i),
+                      )
+                    : html`<div class="empty compact">No readable messages in this conversation.</div>`
+                }
+                ${ctx.composer.state.error ? html`<div class="composer-error inline">${ctx.composer.state.error}</div>` : nothing}
               </div>
             </section>
           </div>
@@ -742,8 +881,8 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
     `;
   }
 
-  function setTranscriptWindow(anchorSeq: number | null, earlierCount: number): void {
-    chatState.transcriptAnchorSeq = earlierCount > 0 ? anchorSeq : null;
+  function setTranscriptWindow(anchorSeq: number | null, earlierCount: number, hasEarlier = earlierCount > 0): void {
+    chatState.transcriptAnchorSeq = hasEarlier ? anchorSeq : null;
     chatState.earlierCount = earlierCount;
     if (chatState.agent) drawActiveChat(chatState.agent);
   }
@@ -770,14 +909,20 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
     try {
       const page = await fetchTranscript(sessionId, { beforeSeq: anchor, tailTurns: TAIL_TURNS });
       if (agent !== chatState.agent || agent.state.isStreaming) return;
-      const earlierMessages = entriesToMessages(page.entries ?? [], transcriptModel());
+      const split = inheritedTranscript(chatState.forkSession ?? {}, page.entries ?? []);
+      const earlierMessages = entriesToMessages(split.current, transcriptModel());
+      if (!chatState.inheritedLoaded)
+        chatState.inheritedMessages = [
+          ...entriesToMessages(split.inherited, transcriptModel()),
+          ...chatState.inheritedMessages,
+        ];
       const scroller = chatState.host?.querySelector<HTMLElement>(".chat-scroll");
       const priorHeight = scroller?.scrollHeight ?? 0;
       const priorTop = scroller?.scrollTop ?? 0;
       agent.state.messages = [...earlierMessages, ...agent.state.messages];
-      const remaining = page.earlierEntries ?? 0;
-      chatState.transcriptAnchorSeq = remaining > 0 ? (page.entries?.[0]?.seq ?? null) : null;
-      chatState.earlierCount = remaining;
+      const rawRemaining = page.earlierEntries ?? 0;
+      chatState.transcriptAnchorSeq = rawRemaining > 0 ? (page.entries?.[0]?.seq ?? null) : null;
+      chatState.earlierCount = currentEarlierCount(chatState.forkSession ?? {}, rawRemaining);
       chatState.loadingEarlier = false;
       drawActiveChat(agent);
       requestAnimationFrame(() => {
@@ -847,12 +992,16 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
 
   function drawActiveChat(agent = chatState.agent, opts: { forceScroll?: boolean } = {}): void {
     if (!agent || agent !== chatState.agent || !chatState.host || appState.currentView !== "chats") return;
-    const messages = visibleMessages(agent);
+    const currentMessages = visibleMessages(agent);
+    const messages = chatState.inheritedExpanded
+      ? [...chatState.inheritedMessages, ...currentMessages]
+      : currentMessages;
     const isNewUser = sessionsState.list.filter((s) => s.id).length === 0;
     let messageContent: Array<TemplateResult | typeof nothing> | TemplateResult | typeof nothing = nothing;
+    const inheritedOffset = chatState.inheritedExpanded ? chatState.inheritedMessages.length : 0;
     if (messages.length) {
       messageContent = messages.map((m, i) =>
-        settledChatMessage(m, i, agent.state.isStreaming && m === agent.state.streamingMessage),
+        settledChatMessage(m, i - inheritedOffset, agent.state.isStreaming && m === agent.state.streamingMessage),
       );
     } else if (isNewUser) {
       messageContent = welcomeGreeting();
@@ -880,8 +1029,9 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
             glanceTier
               ? paneGlance(agent, messages, glanceTier)
               : html`<section class="chat-scroll" @scroll=${onTranscriptScroll}>
-                  <div class="message-stack ${messages.length ? "" : "empty-stack"}">
-                    ${chatState.earlierCount > 0 ? earlierNotice(agent) : nothing} ${messageContent}
+                  <div class="message-stack ${messages.length || chatState.forkSession ? "" : "empty-stack"}">
+                    ${inheritedHeader()} ${chatState.earlierCount > 0 ? earlierNotice(agent) : nothing}
+                    ${messageContent}
                     ${showStateError(messages, agent.state.errorMessage) ? html`<div class="composer-error inline">${agent.state.errorMessage}</div>` : nothing}
                   </div>
                 </section>`
@@ -1078,7 +1228,7 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
     const text = messageText(message).trim();
     const ts = (message as { timestamp?: number }).timestamp;
     if (!text && ts === undefined) return nothing;
-    const forkable = Boolean(chatState.threadRef && chatState.sessionId && chatState.agent);
+    const forkable = Boolean(index >= 0 && chatState.threadRef && chatState.sessionId && chatState.agent);
     return html`
       <div class="message-meta">
         ${ts !== undefined ? html`<span class="message-time">${formatClock(ts)}</span>` : nothing}
@@ -1132,13 +1282,16 @@ export function createChatSurface(ctx: ConvCtx): ChatSurface {
       if (anchor !== null) userOrdinal += userMessagesBefore(entries ?? [], anchor);
       const upToSeq = forkCutSeq(entries ?? [], userOrdinal, isUser);
       const forked = await forkSession(sessionId, upToSeq);
+      const split = inheritedTranscript(forked.session, forked.entries ?? []);
       ctx.composer.carryModelPick(sourceThreadRef, forked.session.threadRef);
       mountContinuable(
         forked.session.threadRef,
         forked.session.id,
         forked.session.scopeId,
-        entriesToMessages(forked.entries ?? [], transcriptModel()),
+        entriesToMessages(split.current, transcriptModel()),
         forked.session.channelName ?? null,
+        forked.session,
+        entriesToMessages(split.inherited, transcriptModel()),
       );
       await refreshSessions({ silent: true });
       renderList();
