@@ -1,6 +1,6 @@
 import { errMessage } from "../util/errors.ts";
 import { sleep } from "./util.ts";
-import { isExternallyShared, type ChannelMeta } from "./identity.ts";
+import { isExternallyShared, isMpim, type ChannelMeta } from "./identity.ts";
 
 export interface SlackReplyArgs {
   channel: string;
@@ -59,6 +59,10 @@ export function slackReplyArgs(
 export function scopeSurfaceUrl(webUiPublicUrl: string | undefined, scopeId: string): string | undefined {
   const base = (webUiPublicUrl ?? "").trim().replace(/\/+$/, "");
   if (!base || !scopeId) return undefined;
+  const personal = /^personal:([^@]+)@/.exec(scopeId);
+  if (personal?.[1] && /^[a-z0-9._-]+$/i.test(personal[1])) return `${base}/projects/${personal[1].toLowerCase()}`;
+  const shared = /^(channel|group):(.+)$/.exec(scopeId);
+  if (shared?.[1] && shared[2]) return `${base}/projects/${shared[1]}/${encodeURIComponent(shared[2])}`;
   return `${base}/contexts?scope=${encodeURIComponent(scopeId)}`;
 }
 
@@ -73,11 +77,16 @@ export function channelWelcomeMessage(surfaceUrl: string | undefined): string {
   return `Hi! I'm the agent for this channel. Everyone here can see and manage what I'm doing — scheduled jobs, skills, files, and apps — on this channel's shared page: ${surfaceUrl}`;
 }
 
-export function surfaceHeaderText(modelName: string | undefined, projectUrl: string | undefined): string | undefined {
-  const model = (modelName ?? "").trim();
+export function surfaceHeaderText(
+  facts: { agentLabel?: string; modelName?: string },
+  projectUrl: string | undefined,
+): string | undefined {
+  const agent = (facts.agentLabel ?? "").trim();
+  const model = (facts.modelName ?? "").trim();
   const url = (projectUrl ?? "").trim();
-  const parts = [...(model ? [`Model: ${model}`] : []), ...(url ? [url] : [])];
-  return parts.length ? parts.join(" · ") : undefined;
+  const modelText = model ? `${agent ? `${agent} is using` : "Using"} ${model} here.` : "";
+  const link = url ? `<${url}|More settings>` : "";
+  return [modelText, link].filter(Boolean).join(" ") || undefined;
 }
 
 function unwrapSlackLinks(text: string): string {
@@ -106,7 +115,7 @@ export interface SurfaceHeaderClient {
 }
 
 export function createSurfaceHeaderEnsurer(opts: {
-  effectiveModelName(scope: string): Promise<string>;
+  headerFacts(scope: string): Promise<{ agentLabel?: string; modelName: string }>;
   webUiPublicUrl: string | undefined;
   ids: { botUserId: string };
   maxTracked?: number;
@@ -114,17 +123,22 @@ export function createSurfaceHeaderEnsurer(opts: {
   const maxTracked = opts.maxTracked ?? SURFACE_HEADER_MAX_TRACKED;
   const settled = new Map<string, string>();
   const inFlight = new Set<string>();
-  return (client, channel, scopeId, kind) => {
-    if (inFlight.has(channel)) return;
+  const requeued = new Set<string>();
+  return function ensure(client, channel, scopeId, kind) {
+    if (inFlight.has(channel)) {
+      requeued.add(channel);
+      return;
+    }
     inFlight.add(channel);
     void (async () => {
       try {
         const desired = surfaceHeaderText(
-          await opts.effectiveModelName(scopeId),
+          await opts.headerFacts(scopeId),
           scopeSurfaceUrl(opts.webUiPublicUrl, scopeId),
         );
         if (!desired || settled.get(channel) === desired) return;
         const info = (await client.conversations.info({ channel })).channel;
+        if (kind === "channel" && (isExternallyShared(info) || isMpim(info))) return;
         const existing = kind === "dm" ? info?.topic : info?.purpose;
         if (headerUpdate(existing, opts.ids.botUserId, desired) === "set") {
           if (kind === "dm") await client.conversations.setTopic({ channel, topic: desired });
@@ -136,6 +150,7 @@ export function createSurfaceHeaderEnsurer(opts: {
         console.error("[slack] surface header ensure failed:", errMessage(err));
       } finally {
         inFlight.delete(channel);
+        if (requeued.delete(channel)) ensure(client, channel, scopeId, kind);
       }
     })();
   };

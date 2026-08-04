@@ -3,12 +3,11 @@ import { live } from "lit/directives/live.js";
 import { Archive, Check, Copy, ExternalLink, MoreHorizontal, Pencil, RotateCcw, X } from "lucide";
 import { api, withBase } from "./core-bridge";
 import { errMessage } from "../../chassis/src/errors";
-import { copyText, icon, relTime } from "./ui";
+import { copyText, fieldSelect, icon, relTime } from "./ui";
 import { listBackLink, listPageTpl } from "./list-page";
 import { contextsState, ensureContexts, scopeChip } from "./contexts";
 import { appState } from "./shell";
-import { chatState, drawActiveChat, newChat } from "./chat";
-import { composerState, focusComposerEnd } from "./composer";
+import { mainConversation } from "./conversations";
 import { focusDialogCancel, restoreDialogFocus, trapDialogFocus } from "./dialog-focus";
 import {
   withDeploymentDetailNotice,
@@ -161,7 +160,7 @@ function deploymentRow(d: DeploymentView): TemplateResult {
         <span class="list-row-meta deploy-row-meta">
           ${contextScope ? scopeChip(contextScope) : nothing}
           <span>${ownerLabel(d)}</span>
-          ${permissionBadge(d)}
+          ${canManage(d) ? permissionBadge(d) : nothing}
           <span>${versionLabel(d)}</span>
           <span>${deployedLabel(d)}</span>
         </span>
@@ -306,19 +305,20 @@ function drawDeploysPage(): void {
         onRefresh: () => void renderDeploys(),
         action: { label: "Deploy with Agent", onClick: deployWithAgent },
         controls: html`<label class="deploy-sort"
-          ><span>Sort</span
-          ><select
-            aria-label="Sort apps"
-            .value=${deploySort}
-            @change=${(event: Event) => {
-              deploySort = (event.currentTarget as HTMLSelectElement).value as DeploymentSort;
+          ><span>Sort</span>${fieldSelect({
+            compact: true,
+            ariaLabel: "Sort apps",
+            value: deploySort,
+            onChange: (value) => {
+              deploySort = value as DeploymentSort;
               drawDeploysPage();
-            }}
-          >
-            <option value="newest">Newest</option>
-            <option value="name">Name</option>
-            <option value="status">Status</option>
-          </select></label
+            },
+            options: [
+              html`<option value="newest">Newest</option>`,
+              html`<option value="name">Name</option>`,
+              html`<option value="status">Status</option>`,
+            ],
+          })}</label
         >`,
         search: {
           value: deployQuery,
@@ -844,10 +844,11 @@ async function openLiveEdit(d: DeploymentView, button: HTMLButtonElement): Promi
 }
 
 function deployWithAgent(): void {
-  newChat();
-  composerState.draft = "Deploy an app for me. ";
-  drawActiveChat(chatState.agent);
-  focusComposerEnd();
+  const conv = mainConversation();
+  conv.newChat();
+  conv.composer.state.draft = "Deploy an app for me. ";
+  conv.drawActiveChat(conv.state.agent);
+  conv.composer.focusComposerEnd();
 }
 
 async function refreshDeployments(): Promise<"updated" | "failed" | "superseded"> {

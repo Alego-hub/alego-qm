@@ -29,15 +29,16 @@ import {
 } from "./core-bridge";
 import { UI_BASE } from "./deep-link";
 import { errMessage } from "../../chassis/src/errors";
-import { actionSnippet, closeFormMenus, formatBytes, icon, initials, relTime, toggleFormMenu } from "./ui";
+import { actionSnippet, closeFormMenus, fieldSelect, formatBytes, icon, initials, relTime, toggleFormMenu } from "./ui";
 import { appState, renderSidebarTop, replacePanePreservingFocus, switchView, syncUrlFromState } from "./shell";
-import { newChat } from "./chat";
+import { mainConversation } from "./conversations";
 import { groupDmTitle, openSession, refreshSessions, sessionsState, slackLogo, surfaceOf } from "./sessions";
 import { activityOf } from "./session-list";
 import type { CronView } from "./crons";
 import { cronRunSummary, cronRunSummaryTitle, cronScheduleSummary } from "./cron-format";
 import { restoreDialogFocus } from "./dialog-focus";
-import { ambientPolicyApplies, ambientPolicySection, loadAmbientPolicy, resetAmbientPolicy } from "./ambient-policy";
+import { ambientPolicySection, loadAmbientPolicy, resetAmbientPolicy } from "./ambient-policy";
+import { contextModelSection, loadContextModel, resetContextModel } from "./context-model";
 
 interface ScopeFile {
   id: string;
@@ -180,6 +181,7 @@ export async function renderContexts(): Promise<void> {
   ) {
     void loadScopeResources(contextsState.selected);
     void loadAmbientPolicy(contextsState.selected, drawContexts);
+    void loadContextModel(contextsState.selected, drawContexts);
   }
   drawContexts();
 }
@@ -222,6 +224,18 @@ export async function ensureContexts(force = false): Promise<CoreContext[]> {
 
 export function personalScopeId(): string | null {
   return contextsState.list.find((c) => c.kind === "personal")?.scopeId ?? null;
+}
+
+export function resolveProjectScope(contexts: readonly CoreContext[], slug: string): string | null {
+  if (slug.startsWith("channel:") || slug.startsWith("group:")) {
+    return contexts.some((context) => context.scopeId === slug) ? slug : null;
+  }
+  const normalized = slug.toLowerCase();
+  const matches = contexts.filter((context) => {
+    const match = /^personal:([^@]+)@/.exec(context.scopeId);
+    return match?.[1]?.toLowerCase() === normalized;
+  });
+  return matches.length === 1 ? matches[0]!.scopeId : null;
 }
 
 function metaForScope(scopeId: string | null, fallbackName?: string | null): { title: string; glyph: IconNode } {
@@ -364,18 +378,15 @@ function gridTpl(): TemplateResult {
             }}
         /></label>
         <label class="list-select"
-          ><span>Show</span
-          ><select
-            .value=${contextsWorkspaceFilter}
-            @change=${(event: Event) => {
-              contextsWorkspaceFilter = (event.currentTarget as HTMLSelectElement)
-                .value as typeof contextsWorkspaceFilter;
+          ><span>Show</span>${fieldSelect({
+            compact: true,
+            value: contextsWorkspaceFilter,
+            onChange: (value) => {
+              contextsWorkspaceFilter = value as typeof contextsWorkspaceFilter;
               drawContexts();
-            }}
-          >
-            <option value="active">Active only</option>
-            <option value="all">Everything</option>
-          </select></label
+            },
+            options: [html`<option value="active">Active only</option>`, html`<option value="all">Everything</option>`],
+          })}</label
         >
       </div>
       ${status ? html`<div class="status">${status}</div>` : nothing} ${projectList}
@@ -407,7 +418,6 @@ function contextCard(c: CoreContext): TemplateResult {
 function detailTpl(c: CoreContext): TemplateResult {
   const { title, sub, glyph } = contextMeta(c);
   const sessions = sessionsIn(c.scopeId);
-  const hasSettings = Boolean(c.project) || ambientPolicyApplies(c.scopeId);
   const completelyEmpty = sessions.length === 0 && scopeResourcesEmpty(c.scopeId);
   return html`
     <div class="context-detail">
@@ -438,7 +448,7 @@ function detailTpl(c: CoreContext): TemplateResult {
           </button>
         </div>
       </div>
-      <div class=${`context-workspace ${hasSettings ? "has-settings" : ""}`}>
+      <div class="context-workspace has-settings">
         <div class="context-workspace-main">
           ${
             completelyEmpty
@@ -468,13 +478,10 @@ function detailTpl(c: CoreContext): TemplateResult {
                 `
           }
         </div>
-        ${
-          hasSettings
-            ? html`<aside class="context-settings" aria-label=${c.project ? "Project settings" : "Context settings"}>
-                ${c.project ? projectMembersSection(c) : nothing} ${ambientPolicySection(c.scopeId)}
-              </aside>`
-            : nothing
-        }
+        <aside class="context-settings" aria-label=${c.project ? "Project settings" : "Context settings"}>
+          ${c.project ? projectMembersSection(c) : nothing} ${contextModelSection(c.scopeId)}
+          ${ambientPolicySection(c.scopeId)}
+        </aside>
       </div>
     </div>
   `;
@@ -1195,16 +1202,18 @@ function selectContext(scopeId: string | null): void {
   contextsState.resourcesNotice = "";
   contextsState.resourcesLoading = false;
   resetAmbientPolicy();
+  resetContextModel();
   syncUrlFromState();
   drawContexts();
   if (scopeId) {
     void loadScopeResources(scopeId);
     void loadAmbientPolicy(scopeId, drawContexts);
+    void loadContextModel(scopeId, drawContexts);
   }
 }
 
 function startChatIn(c: CoreContext): void {
-  newChat(c.kind === "personal" ? undefined : { scopeId: c.scopeId, name: c.name });
+  mainConversation().newChat(c.kind === "personal" ? undefined : { scopeId: c.scopeId, name: c.name });
 }
 
 async function openFromContext(s: CoreSession): Promise<void> {

@@ -9,7 +9,9 @@ import {
   getModelOptionsForHarness,
   harnessSupportsEffort,
   harnessSupportsFastMode,
+  runtimeModelOptions,
 } from "../src/model-options.ts";
+import { modelSupportsFastMode, setFastModeModelIds } from "../src/pi-models.ts";
 
 test("the built-in picker includes Fable alongside Opus/Sonnet/Haiku", () => {
   applyPickerModelIds(null);
@@ -56,6 +58,7 @@ test("the Codex picker can render and select the OpenAI model", () => {
 
 test("runtime options qualify harness/model pairs and select the effective pair", () => {
   applyRuntimeOptions(
+    null,
     ["pi", "codex"],
     { pi: ["claude-opus-4-8"], codex: ["gpt-5.6-sol"] },
     { harnessId: "codex", modelId: "gpt-5.6-sol" },
@@ -80,6 +83,7 @@ test("runtime options qualify harness/model pairs and select the effective pair"
 
 test("runtime options preserve a fetched OpenRouter model as the selected web turn model", () => {
   applyRuntimeOptions(
+    null,
     ["pi"],
     { pi: ["anthropic/claude-sonnet-4.5"] },
     { harnessId: "pi", modelId: "anthropic/claude-sonnet-4.5" },
@@ -94,6 +98,7 @@ test("runtime options preserve a fetched OpenRouter model as the selected web tu
 
 test("runtime options hide retired persisted model ids", () => {
   applyRuntimeOptions(
+    null,
     ["claude", "codex"],
     {
       claude: ["claude-fable-5", "claude-sonnet-4-6", "claude-sonnet-5"],
@@ -123,7 +128,7 @@ test("harness-only turn controls are exposed only where the adapter supports the
 });
 
 test("an all-retired list falls back within the approved harness", () => {
-  applyRuntimeOptions(["codex"], { codex: ["gpt-5.5"] }, { harnessId: "codex", modelId: "gpt-5.5" });
+  applyRuntimeOptions(null, ["codex"], { codex: ["gpt-5.5"] }, { harnessId: "codex", modelId: "gpt-5.5" });
   assert.deepEqual(getHarnessOptions(), [{ value: "codex", label: "Codex" }]);
   assert.deepEqual(
     getModelOptionsForHarness("codex").map((o) => o.label),
@@ -152,4 +157,43 @@ test("duplicate ids are de-duped, preserving first occurrence order", () => {
     ["claude-sonnet-5", "claude-opus-4-8"],
   );
   applyPickerModelIds(null);
+});
+
+test("two panes on different scopes keep their own picker, default, and fast-mode set", () => {
+  applyRuntimeOptions("personal:me", ["pi"], { pi: ["claude-opus-5"] }, { harnessId: "pi", modelId: "claude-opus-5" });
+  setFastModeModelIds("personal:me", ["claude-opus-5"]);
+  applyRuntimeOptions(
+    "group:team",
+    ["codex"],
+    { codex: ["gpt-5.6-sol"] },
+    { harnessId: "codex", modelId: "gpt-5.6-sol" },
+  );
+  setFastModeModelIds("group:team", []);
+
+  assert.equal(
+    defaultModelValue("personal:me"),
+    "pi:claude-opus-5",
+    "the later scope must not capture the earlier one",
+  );
+  assert.equal(defaultModelValue("group:team"), "codex:gpt-5.6-sol");
+  assert.deepEqual(
+    getModelOptions("personal:me").map((o) => o.value),
+    ["pi:claude-opus-5"],
+  );
+  assert.equal(modelSupportsFastMode("personal:me", "claude-opus-5"), true);
+  assert.equal(modelSupportsFastMode("group:team", "claude-opus-5"), false);
+});
+
+test("a scope's own model list is derived without disturbing the active picker", () => {
+  applyPickerModelIds(["claude-opus-4-8"], "claude-opus-4-8");
+  const scoped = runtimeModelOptions(["pi", "codex"], { pi: ["claude-sonnet-5"], codex: ["gpt-5.6-sol"] });
+  assert.deepEqual(
+    scoped.map((o) => o.value),
+    ["pi:claude-sonnet-5", "codex:gpt-5.6-sol"],
+  );
+  assert.deepEqual(
+    getModelOptions().map((o) => o.value),
+    ["claude-opus-4-8"],
+    "reading a scope's options never re-points the composer's picker",
+  );
 });
