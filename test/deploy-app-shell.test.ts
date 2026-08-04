@@ -33,7 +33,7 @@ function appServingUpstream(upstreamPort: number) {
     },
     auditLog,
     acl,
-    deployDir: mkdtempSync(join(tmpdir(), "edit-widget-")),
+    deployDir: mkdtempSync(join(tmpdir(), "app-shell-")),
   });
   return createApp({
     deploy,
@@ -109,7 +109,7 @@ const viewerCookie = () => `portal_session=${mintPortalSession("U-viewer")}`;
 const ownerToken = (sub: string, expInMs = 60_000) =>
   mintDeployOwnerToken(GATE_SECRET, { slug: "mysite", sub, exp: Date.now() + expInMs });
 
-test("edit widget: a valid owner link becomes a host-only cookie and turns on HTML injection", async () => {
+test("app shell: a valid owner link becomes a host-only cookie and turns on the shell", async () => {
   const f = await widgetFixture();
   try {
     const token = await ownerToken("U1");
@@ -120,40 +120,81 @@ test("edit widget: a valid owner link becomes a host-only cookie and turns on HT
     assert.match(setCookie, /HttpOnly/, "the owner cookie is HttpOnly");
     assert.equal(swallow.headers.location, "/", "the redirect drops the token from the URL");
 
-    const page = await httpGet(f.port, "/", { Host: HOST, Cookie: `dpl_owner=${token}` });
+    const page = await httpGet(f.port, "/", {
+      Host: HOST,
+      Cookie: `dpl_owner=${token}`,
+      "Sec-Fetch-Dest": "document",
+    });
     assert.equal(page.status, 200);
-    assert.match(page.body, /<html><body>APP<\/body><\/html>/, "the app's own HTML is intact");
-    assert.match(page.body, /<script src="\/__claw__\/widget\.js" defer/, "the widget tag is appended");
-    assert.match(page.body, new RegExp(`data-portal="${PORTAL}"`), "the widget knows the portal origin");
-    assert.match(page.body, /data-slug="mysite"/, "the widget knows the app");
+    assert.match(page.body, /__qmAppShell/, "the owner's top-level document load gets the shell");
+    assert.match(page.body, /<iframe id="app" src="\/"/, "the app renders inside a same-origin frame");
+    const portalLine = page.body.match(/const portal = (".*?");/)?.[1];
+    assert.equal(portalLine && JSON.parse(portalLine), PORTAL, "the chat column knows the portal origin");
+    assert.doesNotMatch(page.body, /APP<\/body>/, "the shell is served without touching the upstream");
   } finally {
     await f.close();
   }
 });
 
-test("edit widget: a plain visitor (granted, signed in) gets untouched HTML and no widget endpoints", async () => {
-  const f = await widgetFixture();
-  try {
-    const page = await httpGet(f.port, "/", { Host: HOST, Cookie: viewerCookie() });
-    assert.equal(page.status, 200);
-    assert.equal(page.body, "<html><body>APP</body></html>", "no injection for a non-owner");
-
-    const js = await httpGet(f.port, "/__claw__/widget.js", { Host: HOST, Cookie: viewerCookie() });
-    assert.doesNotMatch(js.body, /__clawEditWidget/, "the gateway serves no widget to non-owners");
-  } finally {
-    await f.close();
-  }
-});
-
-test("edit widget: owner endpoints serve the script and the applied version", async () => {
+test("app shell: the frame's own load (sec-fetch-dest: iframe) proxies the app untouched", async () => {
   const f = await widgetFixture();
   try {
     const token = await ownerToken("U1");
-    const js = await httpGet(f.port, "/__claw__/widget.js", { Host: HOST, Cookie: `dpl_owner=${token}` });
-    assert.equal(js.status, 200);
-    assert.match(String(js.headers["content-type"]), /text\/javascript/);
-    assert.match(js.body, /__clawEditWidget/, "the widget script is served");
+    const page = await httpGet(f.port, "/", {
+      Host: HOST,
+      Cookie: `dpl_owner=${token}`,
+      "Sec-Fetch-Dest": "iframe",
+    });
+    assert.equal(page.status, 200);
+    assert.equal(page.body, "<html><body>APP</body></html>", "the app's own HTML is byte-identical");
+  } finally {
+    await f.close();
+  }
+});
 
+test("app shell: the frame src preserves the requested path and query", async () => {
+  const f = await widgetFixture();
+  try {
+    const token = await ownerToken("U1");
+    const page = await httpGet(f.port, "/reports/q3?tab=2", {
+      Host: HOST,
+      Cookie: `dpl_owner=${token}`,
+      "Sec-Fetch-Dest": "document",
+    });
+    assert.equal(page.status, 200);
+    assert.match(page.body, /<iframe id="app" src="\/reports\/q3\?tab=2"/, "deep links land inside the frame");
+  } finally {
+    await f.close();
+  }
+});
+
+test("app shell: a client without fetch metadata gets the raw app, never a nested shell", async () => {
+  const f = await widgetFixture();
+  try {
+    const token = await ownerToken("U1");
+    const page = await httpGet(f.port, "/", { Host: HOST, Cookie: `dpl_owner=${token}` });
+    assert.equal(page.status, 200);
+    assert.equal(page.body, "<html><body>APP</body></html>", "no sec-fetch-dest means a straight proxy");
+  } finally {
+    await f.close();
+  }
+});
+
+test("app shell: a plain visitor (granted, signed in) gets untouched HTML and no shell endpoints", async () => {
+  const f = await widgetFixture();
+  try {
+    const page = await httpGet(f.port, "/", { Host: HOST, Cookie: viewerCookie(), "Sec-Fetch-Dest": "document" });
+    assert.equal(page.status, 200);
+    assert.equal(page.body, "<html><body>APP</body></html>", "no shell for a non-owner");
+  } finally {
+    await f.close();
+  }
+});
+
+test("app shell: the owner version endpoint reports the applied version", async () => {
+  const f = await widgetFixture();
+  try {
+    const token = await ownerToken("U1");
     const version = await httpGet(f.port, "/__claw__/version", { Host: HOST, Cookie: `dpl_owner=${token}` });
     assert.equal(version.status, 200);
     assert.equal(JSON.parse(version.body).version, 1, "the applied version is reported");
@@ -162,7 +203,7 @@ test("edit widget: owner endpoints serve the script and the applied version", as
   }
 });
 
-test("edit widget: an owner's XHR/fetch HTML fragment is not injected (sec-fetch-dest gate)", async () => {
+test("app shell: an owner's XHR/fetch HTML fragment is not shelled (sec-fetch-dest gate)", async () => {
   const f = await widgetFixture();
   try {
     const token = await ownerToken("U1");
@@ -172,20 +213,20 @@ test("edit widget: an owner's XHR/fetch HTML fragment is not injected (sec-fetch
       "Sec-Fetch-Dest": "empty",
     });
     assert.equal(frag.status, 200);
-    assert.doesNotMatch(frag.body, /__claw__\/widget\.js/, "a non-document HTML load is left untouched");
+    assert.doesNotMatch(frag.body, /__qmAppShell/, "a non-document HTML load is left untouched");
   } finally {
     await f.close();
   }
 });
 
-test("edit widget: a 206 partial HTML response is not injected", async () => {
+test("app shell: a 206 partial HTML response streams byte-exact through the frame", async () => {
   const f = await widgetFixture((_req, res) => {
     res.writeHead(206, { "content-type": "text/html", "content-range": "bytes 0-9/32" });
     res.end("<html></h");
   });
   try {
     const token = await ownerToken("U1");
-    const r = await httpGet(f.port, "/", { Host: HOST, Cookie: `dpl_owner=${token}` });
+    const r = await httpGet(f.port, "/", { Host: HOST, Cookie: `dpl_owner=${token}`, "Sec-Fetch-Dest": "iframe" });
     assert.equal(r.status, 206);
     assert.equal(r.body, "<html></h", "a range slice stays byte-exact");
   } finally {
@@ -193,7 +234,7 @@ test("edit widget: a 206 partial HTML response is not injected", async () => {
   }
 });
 
-test("edit widget: a non-owner request to /__claw__/ falls through to the app, not a gateway 404", async () => {
+test("app shell: a non-owner request to /__claw__/ falls through to the app, not a gateway 404", async () => {
   const f = await widgetFixture((req, res) => {
     res.writeHead(200, { "content-type": "text/plain" });
     res.end(`APP SAW ${req.url}`);
@@ -207,7 +248,7 @@ test("edit widget: a non-owner request to /__claw__/ falls through to the app, n
   }
 });
 
-test("edit widget: an owner token for someone who cannot manage the app grants nothing", async () => {
+test("app shell: an owner token for someone who cannot manage the app grants nothing", async () => {
   const f = await widgetFixture();
   try {
     const forged = await ownerToken("U-stranger");
@@ -215,15 +256,19 @@ test("edit widget: an owner token for someone who cannot manage the app grants n
     assert.equal(swallow.status, 401, "a non-manager's owner token leaves them an anonymous visitor");
     assert.equal(swallow.headers["set-cookie"], undefined, "no owner cookie for a non-manager");
 
-    const page = await httpGet(f.port, "/", { Host: HOST, Cookie: `dpl_owner=${forged}; ${viewerCookie()}` });
+    const page = await httpGet(f.port, "/", {
+      Host: HOST,
+      Cookie: `dpl_owner=${forged}; ${viewerCookie()}`,
+      "Sec-Fetch-Dest": "document",
+    });
     assert.equal(page.status, 200, "the visitor's own grant still admits them");
-    assert.doesNotMatch(page.body, /__claw__\/widget\.js/, "a forged owner cookie injects no widget");
+    assert.doesNotMatch(page.body, /__qmAppShell/, "a forged owner cookie raises no shell");
   } finally {
     await f.close();
   }
 });
 
-test("edit widget: an expired owner token is rejected", async () => {
+test("app shell: an expired owner token is rejected", async () => {
   const f = await widgetFixture();
   try {
     const expired = await ownerToken("U1", -1);
@@ -234,7 +279,7 @@ test("edit widget: an expired owner token is rejected", async () => {
   }
 });
 
-test("edit widget: non-HTML responses stream through untouched even for the owner", async () => {
+test("app shell: non-HTML responses stream through untouched even for the owner", async () => {
   const f = await widgetFixture((_req, res) => {
     res.writeHead(200, { "content-type": "application/json", "content-length": "13" });
     res.end('{"data":true}');
@@ -244,31 +289,13 @@ test("edit widget: non-HTML responses stream through untouched even for the owne
     const r = await httpGet(f.port, "/api/data", { Host: HOST, Cookie: `dpl_owner=${token}` });
     assert.equal(r.status, 200);
     assert.equal(r.body, '{"data":true}', "JSON is byte-identical");
-    assert.equal(r.headers["content-length"], "13", "content-length survives when nothing is injected");
+    assert.equal(r.headers["content-length"], "13", "content-length survives the proxy");
   } finally {
     await f.close();
   }
 });
 
-test("edit widget: injection drops the stale content-length so the page still parses", async () => {
-  const html = "<html><body>SIZED</body></html>";
-  const f = await widgetFixture((_req, res) => {
-    res.writeHead(200, { "content-type": "text/html", "content-length": String(html.length) });
-    res.end(html);
-  });
-  try {
-    const token = await ownerToken("U1");
-    const r = await httpGet(f.port, "/", { Host: HOST, Cookie: `dpl_owner=${token}` });
-    assert.equal(r.status, 200);
-    assert.match(r.body, /SIZED/);
-    assert.match(r.body, /__claw__\/widget\.js/);
-    assert.equal(r.headers["content-length"], undefined, "the now-wrong content-length is dropped");
-  } finally {
-    await f.close();
-  }
-});
-
-test("edit widget: an app cannot plant the owner cookie on its visitors", async () => {
+test("app shell: an app cannot plant the owner cookie on its visitors", async () => {
   const f = await widgetFixture((_req, res) => {
     res.writeHead(200, {
       "content-type": "text/html",

@@ -19,7 +19,7 @@ import type { ApiCtx, BaseCtx, Route } from "./route.ts";
 import { CONFIG_DEFAULTS } from "../../config.ts";
 import { resolveShareTarget as resolveShareTargetGrammar } from "../artifact-share.ts";
 import { mintDeployOwnerToken, verifyDeployGitAccess, verifyDeployOwnerToken } from "../../deploy/access-token.ts";
-import { EDIT_WIDGET_JS, EDIT_WIDGET_PATH_PREFIX, editWidgetTag } from "../../deploy/edit-widget.ts";
+import { APP_SHELL_PATH_PREFIX, appShellHtml } from "../../deploy/app-shell.ts";
 import { principalDestination } from "../../reach/reach.ts";
 import { portalSessionSub } from "../../deploy/viewer-session.ts";
 import { proxyHeaders } from "../../util/http-proxy.ts";
@@ -245,28 +245,12 @@ function checkDeploymentHttp2Session(connection: DeploymentHttp2Connection): voi
   }
 }
 
-function htmlInjection(
-  inject: string | undefined,
-  method: string,
-  statusCode: number,
-  headers: Record<string, string | string[]>,
-): string | null {
-  if (!inject || method !== "GET") return null;
-  if (statusCode !== 200) return null;
-  const contentType = headers["content-type"];
-  if (typeof contentType !== "string" || !/^text\/html\b/i.test(contentType)) return null;
-  if (headers["content-encoding"]) return null;
-  delete headers["content-length"];
-  return inject;
-}
-
 function proxyReachHttp2(
   ctx: BaseCtx,
   endpoint: Awaited<ReturnType<App["reachDeployment"]>> & { status: "ok" },
   subPath: string,
   headers: Record<string, string | string[]>,
   bufferedBody: Buffer | null,
-  inject?: string,
 ): void {
   const { req, res, deps, url, method } = ctx;
   const { host, port, tls } = endpoint.endpoint;
@@ -311,7 +295,6 @@ function proxyReachHttp2(
     current = up;
     connection.activeStreams++;
     let responseStarted = false;
-    let pendingInject: string | null = null;
     let failureHandled = false;
     const fail = (error?: unknown): void => {
       if (failureHandled) return;
@@ -345,7 +328,7 @@ function proxyReachHttp2(
     up.once("close", () => {
       releaseDeploymentHttp2Stream(origin, connection);
       if (!responseStarted || !up.readableEnded || up.rstCode !== http2Constants.NGHTTP2_NO_ERROR) fail();
-      else if (!failureHandled && !res.destroyed && !res.writableEnded) res.end(pendingInject ?? undefined);
+      else if (!failureHandled && !res.destroyed && !res.writableEnded) res.end();
     });
     up.setTimeout(deps.deployDialTimeoutMs ?? CONFIG_DEFAULTS.deployDialTimeoutMs, () => {
       if (failureHandled) return;
@@ -365,7 +348,6 @@ function proxyReachHttp2(
       armThrottleShield(`${host}:${port}`, Number(responseHeaders[":status"] ?? 0), up);
       const status = Number(responseHeaders[":status"] ?? 502);
       const safeHeaders = gatewaySafeResponseHeaders(responseHeaders);
-      pendingInject = htmlInjection(inject, method, status, safeHeaders);
       res.writeHead(status, safeHeaders);
       up.pipe(res, { end: false });
     });
@@ -381,7 +363,6 @@ async function proxyReach(
   ctx: BaseCtx,
   reach: Awaited<ReturnType<App["reachDeployment"]>>,
   subPath: string,
-  inject?: string,
 ): Promise<void> {
   const { req, res, deps, url, method } = ctx;
   if (res.destroyed) return;
@@ -408,7 +389,6 @@ async function proxyReach(
     host: hostHeader,
     ...reach.endpoint.proxyHeaders,
   };
-  if (inject) headers["accept-encoding"] = "identity";
   if (/(?:^|,)\s*chunked\s*$/i.test(String(req.headers["transfer-encoding"] ?? ""))) {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -428,7 +408,7 @@ async function proxyReach(
   }
   if (res.destroyed) return;
   if (reach.endpoint.httpVersion === "2") {
-    proxyReachHttp2(ctx, reach, subPath, headers, bufferedBody, inject);
+    proxyReachHttp2(ctx, reach, subPath, headers, bufferedBody);
     return;
   }
   const up = requestFn({ hostname: host, port, path: subPath + url.search, method, headers }, (upRes) => {
@@ -436,16 +416,8 @@ async function proxyReach(
     upRes.on("error", () => res.destroy());
     armThrottleShield(upstreamKey, upRes.statusCode ?? 0, upRes);
     const headers = gatewaySafeResponseHeaders(upRes.headers);
-    const pendingInject = htmlInjection(inject, method, upRes.statusCode ?? 502, headers);
     res.writeHead(upRes.statusCode ?? 502, headers);
-    if (pendingInject === null) {
-      upRes.pipe(res);
-    } else {
-      upRes.pipe(res, { end: false });
-      upRes.on("end", () => {
-        if (!res.destroyed && !res.writableEnded) res.end(pendingInject);
-      });
-    }
+    upRes.pipe(res);
   });
   up.setTimeout(deps.deployDialTimeoutMs ?? CONFIG_DEFAULTS.deployDialTimeoutMs, () => {
     if (!res.headersSent) sendJson(res, 504, { error: "gateway_timeout", message: "deployment did not respond" });
@@ -690,12 +662,7 @@ export async function proxyDeploymentSubdomain(ctx: BaseCtx): Promise<boolean> {
     const session = await verifyDeployOwnerToken(gateSecret, ownerCookieValue, slug);
     if (session && (await app.canManageDeployment(slug, session.sub))) ownerSub = session.sub;
   }
-  if (ownerSub && ctx.method === "GET" && pathname.startsWith(EDIT_WIDGET_PATH_PREFIX)) {
-    if (pathname === "/__claw__/widget.js") {
-      res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
-      res.end(EDIT_WIDGET_JS);
-      return true;
-    }
+  if (ownerSub && ctx.method === "GET" && pathname.startsWith(APP_SHELL_PATH_PREFIX)) {
     if (pathname === "/__claw__/version") {
       const d = await app.getDeployment(slug);
       if (!d) sendJson(res, 404, { error: "not_found" });
@@ -705,17 +672,30 @@ export async function proxyDeploymentSubdomain(ctx: BaseCtx): Promise<boolean> {
     sendJson(res, 404, { error: "not_found" });
     return true;
   }
-  const fetchDest = String(req.headers["sec-fetch-dest"] ?? "");
-  const isDocumentLoad = fetchDest === "" || fetchDest === "document";
-  const inject =
-    ownerSub && isDocumentLoad && deps.deployAppsLoginUrl ? editWidgetTag(deps.deployAppsLoginUrl, slug) : undefined;
   if (ownerSub) {
     if (signInAttempted && ctx.method === "GET") {
       cleanUrlRedirect();
       return true;
     }
+    // A top-level document load gets the owner shell: a slim top bar over the app
+    // (framed same-origin) with a slide-out chat column for iterating on it. The
+    // frame's own load carries sec-fetch-dest: iframe, so it proxies straight through.
+    const isTopDocument = String(req.headers["sec-fetch-dest"] ?? "") === "document";
+    if (ctx.method === "GET" && isTopDocument && deps.deployAppsLoginUrl) {
+      const accent = deps.config ? (await deps.config.getBrandingDurable(orgScope(deps)))?.accent : undefined;
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(
+        appShellHtml({
+          slug,
+          portalUrl: deps.deployAppsLoginUrl,
+          path: safePathname + url.search,
+          ...(accent ? { accent } : {}),
+        }),
+      );
+      return true;
+    }
     const reach = await app.reachDeployment(slug, "", { bypassAcl: true });
-    await proxyReach(ctx, reach, pathname, inject);
+    await proxyReach(ctx, reach, pathname);
     return true;
   }
   const sessionSecret = deps.deployAppsSessionSecret;
