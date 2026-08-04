@@ -101,6 +101,7 @@ function strictPostAllowed(pathname: string, body: unknown): boolean {
   if (
     pathname === "/v1/surface-context" ||
     pathname === "/v1/projects" ||
+    pathname === "/v1/conversations" ||
     pathname === "/v1/memory/search" ||
     pathname === "/v1/memory/restore" ||
     pathname.startsWith("/v1/run-signals/") ||

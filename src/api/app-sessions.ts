@@ -43,6 +43,7 @@ export function createSessionMethods(
   | "authorizesCapabilityScope"
   | "updateSession"
   | "regenerateTitle"
+  | "spawnSession"
   | "forkSession"
   | "grant"
   | "revokeGrant"
@@ -475,6 +476,46 @@ export function createSessionMethods(
         if (!members?.includes(principalId)) return null;
         return fork(members);
       });
+    },
+
+    async spawnSession(principalId, opts) {
+      const scope = opts.scopeId;
+      const parsed = parseScopeId(scope);
+      const create = async (projectMembers?: readonly string[], channelName?: string) => {
+        const threadRef = `web:${principalId}:${randomUUID()}`;
+        let kind: "group" | "channel" | "dm" = "dm";
+        if (parsed.kind === "group") kind = "group";
+        else if (parsed.kind === "channel") kind = "channel";
+        const session = await deps.sessions.getOrCreateByThread(threadRef, kind, scope, channelName, "web");
+        await Promise.all(
+          (projectMembers ?? [principalId]).map((memberId) => deps.sessions.addParticipant(session.id, memberId)),
+        );
+        if (opts.title?.trim()) await deps.sessions.updateTitle(session.id, opts.title.trim());
+        deps.auditLog.record({
+          at: Date.now(),
+          principalId,
+          action: "session.spawn",
+          resource: session.id,
+          scopeLabel: scope,
+        });
+        return { session: (await deps.sessions.get(session.id)) ?? session };
+      };
+      if (parsed.kind === "personal") {
+        return parsed.ref === principalId ? create() : null;
+      }
+      const projectId = parsed.kind === "group" ? projectIdFromGroupRef(parsed.ref) : null;
+      if (projectId) {
+        const projects = deps.projects;
+        if (!projects) return null;
+        return projects.withRosterLock(projectId, async (project) => {
+          if (project.orgId !== orgIdOf()) return null;
+          const members = await projects.members(parsed.ref);
+          if (!members?.includes(principalId)) return null;
+          return create(members, project.name);
+        });
+      }
+      if (!(await principalCanAccessCurrentScope(principalId, scope))) return null;
+      return create();
     },
 
     async grant(g) {
