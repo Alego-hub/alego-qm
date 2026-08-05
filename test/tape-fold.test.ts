@@ -129,6 +129,84 @@ test("interrupt event heals dangling tool calls with error results", () => {
   assert.ok(lintFold(out).ok);
 });
 
+test("aborted assistant's dangling tool call is not healed — pi drops the message at replay", () => {
+  seq = 0;
+  const abortedAssistant = row({
+    kind: "message",
+    payload: {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "c9", name: "exec", arguments: { cmd: "sleep" } }],
+      timestamp: 2,
+      stopReason: "aborted",
+    },
+  });
+  const rows = [
+    user("q"),
+    assistant([{ type: "toolCall", id: "c1", name: "exec", arguments: {} }]),
+    toolResult("c1", "ok"),
+    abortedAssistant,
+    row({ kind: "context_event", payload: { event: "interrupt" } }),
+    user("next turn"),
+  ];
+  assert.ok(!tapeNeedsInterruptHeal(rows.slice(0, 4)), "aborted dangler needs no heal");
+  const out = foldTape(rows) as Array<{ role: string; toolCallId?: string }>;
+  assert.ok(
+    !out.some((m) => m.role === "toolResult" && m.toolCallId === "c9"),
+    "no synthetic result for a call pi will drop with its aborted message",
+  );
+  assert.ok(lintFold(out).ok);
+});
+
+test("a poisoned tape — errored assistants, consecutive users, pre-existing interrupt — serves clean", () => {
+  seq = 0;
+  const erroredAssistant = () =>
+    row({
+      kind: "message",
+      payload: { role: "assistant", content: [], timestamp: 4, stopReason: "error" },
+    });
+  const rows = [
+    user("q"),
+    assistant([{ type: "toolCall", id: "c1", name: "exec", arguments: {} }]),
+    toolResult("c1", "ok"),
+    row({
+      kind: "message",
+      payload: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "c9", name: "exec", arguments: {} }],
+        timestamp: 2,
+        stopReason: "aborted",
+      },
+    }),
+    row({ kind: "context_event", payload: { event: "interrupt" } }),
+    user("next turn"),
+    erroredAssistant(),
+    user("retry note"),
+    erroredAssistant(),
+  ];
+  const out = foldTape(rows) as Array<{ role: string; toolCallId?: string }>;
+  assert.ok(!out.some((m) => m.role === "toolResult" && m.toolCallId === "c9"));
+  assert.ok(lintFold(out).ok);
+  assert.ok(!tapeNeedsInterruptHeal(rows));
+});
+
+test("lintFold rejects a toolResult answering an aborted assistant's call", () => {
+  seq = 0;
+  const rows = [
+    user("q"),
+    row({
+      kind: "message",
+      payload: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "c9", name: "exec", arguments: {} }],
+        timestamp: 2,
+        stopReason: "aborted",
+      },
+    }),
+    toolResult("c9", "orphaned on the wire"),
+  ];
+  assert.ok(!lintFold(foldTape(rows)).ok);
+});
+
 test("audience filter withholds message rows the whole room isn't entitled to, never events", () => {
   seq = 0;
   const me = { id: "U1", type: "internal" } as unknown as Principal;
