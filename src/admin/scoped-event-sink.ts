@@ -102,6 +102,7 @@ export interface PostgresEventSinkConfig<E> {
 export interface PostgresEventSink<E> {
   q: PgPool["q"];
   record(input: Omit<E, "ts">): void;
+  flush(): Promise<void>;
   list(opts?: object): Promise<E[]>;
   count(opts?: object): Promise<number>;
 }
@@ -129,6 +130,8 @@ export function createPostgresEventSink<E>(cfg: PostgresEventSinkConfig<E>): Pos
 
   const dbCols = cfg.columns.map(([db]) => db).join(", ");
   const insertSql = `INSERT INTO ${cfg.table}(${dbCols}) VALUES (${cfg.columns.map((_, i) => `$${i + 1}`).join(",")})`;
+  const pendingWrites = new Set<Promise<unknown>>();
+  const settleWrites = (): Promise<unknown[]> => Promise.all(pendingWrites);
 
   const toEvent = (r: Record<string, unknown>): E => {
     const out: Record<string, unknown> = {};
@@ -158,9 +161,16 @@ export function createPostgresEventSink<E>(cfg: PostgresEventSinkConfig<E>): Pos
     record(input) {
       const s = input as Record<string, unknown>;
       const values = cfg.columns.map(([, js]) => (js === "ts" ? Date.now() : (s[js] ?? null)));
-      void q(insertSql, values).catch((err) => console.error(cfg.persistErrorMessage, err));
+      const write = q(insertSql, values)
+        .catch((err) => console.error(cfg.persistErrorMessage, err))
+        .finally(() => pendingWrites.delete(write));
+      pendingWrites.add(write);
+    },
+    async flush() {
+      await settleWrites();
     },
     async list(input = {}) {
+      await settleWrites();
       const opts = input as Record<string, unknown>;
       const { where, params } = buildWhere(opts);
       params.push(opts.limit ?? cfg.defaultLimit);
@@ -171,6 +181,7 @@ export function createPostgresEventSink<E>(cfg: PostgresEventSinkConfig<E>): Pos
       return rows.map(toEvent);
     },
     async count(input = {}) {
+      await settleWrites();
       const { where, params } = buildWhere(input as Record<string, unknown>);
       const rows = await q(`SELECT COUNT(*)::bigint AS total FROM ${cfg.table} ${where}`, params);
       return Number(rows[0]?.total ?? 0);

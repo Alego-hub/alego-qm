@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
 import {
   buildDetectionPrompt,
+  createPiHarness,
   oneShot,
   parseDetectVerdict,
   piHarnessConfigOptions,
@@ -164,6 +165,23 @@ test("piHarnessConfigOptions leaves controlTools off unless a self-API (signing 
   assert.equal(
     piHarnessConfigOptions(testConfig({ signingSecret: "sek", apiBaseUrl: "https://core.test" })).controlTools,
     true,
+  );
+});
+
+test("piHarnessConfigOptions carries the deployment provider into Pi auxiliary model selection", () => {
+  const opts = piHarnessConfigOptions(testConfig({ modelProvider: "openai", openaiApiKey: "sk-openai-test" }));
+  assert.equal(opts.defaultModelId, "gpt-5.6-sol");
+  assert.equal(auxiliaryModelFor(opts.defaultModelId!), "gpt-5.6-luna");
+});
+
+test("Pi title generation surfaces a missing auxiliary-model credential", async () => {
+  const harness = createPiHarness({
+    defaultModelId: "gpt-5.6-sol",
+    resolveProviderKeys: async () => ({}),
+  });
+  await assert.rejects(
+    harness.models.generateTitle!("User:\nPrioritize the public qm issues"),
+    /missing openai credential for title model gpt-5\.6-luna/i,
   );
 });
 

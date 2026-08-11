@@ -9,7 +9,7 @@ import {
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, type Api, type Model } from "@earendil-works/pi-ai";
-import { CONFIG_DEFAULTS, type Config } from "../config.ts";
+import { baseModelProviders, CONFIG_DEFAULTS, type Config } from "../config.ts";
 
 type LegacyThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 const LEGACY_THINKING_LEVELS = new Set<string>(["off", "minimal", "low", "medium", "high", "xhigh"]);
@@ -41,6 +41,7 @@ import {
   DEFAULT_AGENT_MODEL_ID,
   auxiliaryModelFor,
   auxiliaryModelForProvider,
+  defaultModelForHarness,
   defaultInteractiveThinkingLevel,
   modelDisplayName,
   resolveModel,
@@ -103,8 +104,11 @@ export interface PiHarnessOptions {
 }
 
 export function piHarnessConfigOptions(config: Config): PiHarnessOptions {
+  const defaultModelId =
+    config.modelId ??
+    (config.modelProvider ? defaultModelForHarness("pi", undefined, baseModelProviders(config)) : undefined);
   return {
-    ...(config.modelId ? { defaultModelId: config.modelId } : {}),
+    ...(defaultModelId ? { defaultModelId } : {}),
     ...(config.detectModelId ? { detectModelId: config.detectModelId } : {}),
     ...(config.titleModelId ? { titleModelId: config.titleModelId } : {}),
     ...(config.judgeModelId ? { judgeModelId: config.judgeModelId } : {}),
@@ -2028,21 +2032,13 @@ export function createPiHarness(opts?: PiHarnessOptions): Harness {
 
       async generateTitle(transcript: string): Promise<string | undefined> {
         if (!transcript.trim()) return undefined;
-        try {
-          const model = getRequiredModel(titleModelId());
-          const providerKeys = await resolveProviderKeys();
-          if (!keyForModel(providerKeys, model)) return undefined;
-          const out = await oneShot(
-            "pi-title",
-            model,
-            providerKeys,
-            TITLE_GENERATION_PROMPT,
-            transcript.slice(0, 4000),
-          );
-          return sanitizeTitle(out);
-        } catch {
-          return undefined;
+        const model = getRequiredModel(titleModelId());
+        const providerKeys = await resolveProviderKeys();
+        if (!keyForModel(providerKeys, model)) {
+          throw new Error(`Missing ${model.provider} credential for title model ${model.id}`);
         }
+        const out = await oneShot("pi-title", model, providerKeys, TITLE_GENERATION_PROMPT, transcript.slice(0, 4000));
+        return sanitizeTitle(out);
       },
 
       async summarizeApproval(command: string, reason: string, purpose?: string): Promise<string | undefined> {
