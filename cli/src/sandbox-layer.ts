@@ -623,7 +623,7 @@ export function compileApproval(binary: string, a: ToolApproval): { pattern: str
   const decision: ApprovalDecision = a.decision ?? "require_approval";
   if (a.pattern !== undefined) return { pattern: a.pattern, decision };
   const words = (a.command ?? "").trim().split(/\s+/).filter(Boolean).map(escapeRegex);
-  const pattern = `\\b${[escapeRegex(binary), ...words].join("\\s+")}(?:\\b|(?=\\s|$))`;
+  const pattern = `\\b${[escapeRegex(binary), ...words].join("\\s+")}(?:\\b|\\s|$)`;
   return { pattern, decision };
 }
 

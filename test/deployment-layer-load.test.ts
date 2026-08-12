@@ -8,6 +8,7 @@ import { buildApp } from "../src/wiring.ts";
 import { testConfig } from "./support/test-config.ts";
 import { parseToolDescriptor } from "../src/deployment/deployment-layer.ts";
 import { BASE_EPHEMERAL_CRED_LINKS, BASE_RESIDENT_AUTH_PATHS } from "../src/credentials/resident-paths.ts";
+import { evaluateCommandWithLayer } from "../src/policy/command-policy.ts";
 
 const credentialFile = (path: string) => ({ path, kind: "file" as const });
 const credentialDirectory = (path: string) => ({ path, kind: "directory" as const });
@@ -121,13 +122,24 @@ test("loadDeploymentLayer: an authless tool contributes no connector or paths", 
   assert.deepEqual(layer.advertisedTools, ["helper tool"]);
 });
 
-test("approval rules target install.binary rather than the descriptor id", () => {
+test("command-form approval rules target install.binary and are enforced by policy evaluation", () => {
   const layer = loadDeploymentLayer(
     layerDir({
-      acme: { id: "acme", install: { binary: "acmectl" }, approvals: [{ command: "delete", decision: "deny" }] },
+      acme: {
+        id: "acme",
+        install: { binary: "acmectl" },
+        approvals: [{ command: "delete", decision: "require_approval" }],
+      },
     }),
   );
-  assert.equal(layer.commandRules[0]?.pattern, "\\bacmectl\\s+delete(?:\\b|(?=\\s|$))");
+  assert.equal(layer.commandRules[0]?.pattern, "\\bacmectl\\s+delete(?:\\b|\\s|$)");
+  const policy = { mode: "denylist" as const, rules: [] };
+  assert.equal(
+    evaluateCommandWithLayer("acmectl delete project", policy, layer.commandRules).decision,
+    "require_approval",
+  );
+  assert.equal(evaluateCommandWithLayer("acmectl delete", policy, layer.commandRules).decision, "require_approval");
+  assert.equal(evaluateCommandWithLayer("acmectl deleteall", policy, layer.commandRules).decision, "allow");
 });
 
 test("loadDeploymentLayer: a dir with no tools/ is a valid, empty layer", () => {

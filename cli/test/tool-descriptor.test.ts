@@ -235,15 +235,15 @@ test("approvals: command|pattern (exactly one), decision enum, reason optional",
 
 test("compileApproval anchors a command to the binary and builds the regex; pattern is verbatim", () => {
   assert.deepEqual(compileApproval("my-tool", { command: "deploy" }), {
-    pattern: "\\bmy-tool\\s+deploy(?:\\b|(?=\\s|$))",
+    pattern: "\\bmy-tool\\s+deploy(?:\\b|\\s|$)",
     decision: "require_approval",
   });
   assert.deepEqual(compileApproval("my-tool", { command: "secrets set" }), {
-    pattern: "\\bmy-tool\\s+secrets\\s+set(?:\\b|(?=\\s|$))",
+    pattern: "\\bmy-tool\\s+secrets\\s+set(?:\\b|\\s|$)",
     decision: "require_approval",
   });
   assert.deepEqual(compileApproval("my-tool", { command: "delete", decision: "deny" }), {
-    pattern: "\\bmy-tool\\s+delete(?:\\b|(?=\\s|$))",
+    pattern: "\\bmy-tool\\s+delete(?:\\b|\\s|$)",
     decision: "deny",
   });
   assert.deepEqual(compileApproval("my-tool", { pattern: "\\bmy-tool\\b\\s+--force\\b" }), {
