@@ -1,6 +1,6 @@
 import { html, nothing, render, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
-import { Binoculars, Cog, Expand, Maximize2, Plus, Shrink, X } from "lucide";
+import { Binoculars, Clock3, Cog, Expand, Maximize2, Plus, Shrink, X } from "lucide";
 import {
   createDockview,
   type DockviewApi,
@@ -936,7 +936,7 @@ class PaneTab implements ITabRenderer {
                 @mouseleave=${(e: Event) => hideTooltip(e.currentTarget as Element)}
                 >${background.jobs > 0 ? icon(Cog, 11) : nothing}${
                   background.watches > 0 ? icon(Binoculars, 11) : nothing
-                }</span
+                }${background.crons > 0 ? icon(Clock3, 11) : nothing}</span
               >`
             : nothing
         }
