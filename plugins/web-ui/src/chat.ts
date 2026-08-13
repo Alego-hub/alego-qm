@@ -1064,7 +1064,7 @@ export function createChatSurface(
                 </div>`
               : nothing
           }
-          ${glanceTier ? nothing : sessionTopbar()}
+          ${glanceTier || ctx.pane ? nothing : sessionTopbar()}
           ${
             glanceTier
               ? paneGlance(agent, messages, glanceTier)
@@ -1158,7 +1158,7 @@ export function createChatSurface(
           title,
           crumb,
         });
-        if (scope && (tool === "crons" || tool === "files" || tool === "apps")) contextsState.selected = scope;
+        if (scope && tool !== "memory") contextsState.selected = scope;
         switchView(tool === "apps" ? "deploys" : tool);
       },
     });
