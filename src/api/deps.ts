@@ -71,6 +71,7 @@ export interface ServerDeps {
   oauthEnv?: NodeJS.ProcessEnv;
   resolveClient?: OAuthClientResolver;
   consentLinks?: ConsentLinkStore;
+  apiBaseUrl?: string;
   publicUrl?: string;
   portalUrl?: string;
   config?: ScopedConfigStore;
