@@ -1199,8 +1199,9 @@ interface HistoryUserMessage {
 }
 
 function postCallText(payload: unknown): string | null {
-  const p = (payload ?? {}) as { action?: unknown; text?: unknown };
-  if (p.action !== "post" || typeof p.text !== "string" || !p.text.trim()) return null;
+  const p = (payload ?? {}) as { action?: unknown; text?: unknown; files?: unknown };
+  if (p.action !== "post" || typeof p.text !== "string") return null;
+  if (!p.text.trim() && !(Array.isArray(p.files) && p.files.length)) return null;
   return p.text;
 }
 
@@ -1236,6 +1237,14 @@ export function entriesToMessages(entries: SessionEntry[], model: Model<Api>): A
       return;
     }
     deliveryFiles.push(...files);
+  };
+  const appendPostFiles = (resultPayload: unknown): void => {
+    const files = (
+      resultPayload as {
+        files?: Array<{ name?: string; mimetype?: string; sizeBytes?: number; artifactId?: string }>;
+      } | null
+    )?.files;
+    deliveryFiles.push(...deliveredFilesFromAttachments(files));
   };
   const flushWork = (text: string, at?: number, closed = false): void => {
     if (!text && !pending.length && !deliveryFiles.length) return;
@@ -1298,7 +1307,7 @@ export function entriesToMessages(entries: SessionEntry[], model: Model<Api>): A
       };
       if (e.type === "tool_call") {
         const postText = postCallText(e.payload);
-        if (postText && typeof payload?.callId === "string") {
+        if (postText !== null && typeof payload?.callId === "string") {
           heldPosts.set(payload.callId, { text: postText, activity });
           continue;
         }
@@ -1307,6 +1316,7 @@ export function entriesToMessages(entries: SessionEntry[], model: Model<Api>): A
         const held = heldPosts.get(payload.callId)!;
         heldPosts.delete(payload.callId);
         if (postResultOk(e.payload)) {
+          appendPostFiles(e.payload);
           flushWork(held.text, e.createdAt);
           posted = true;
         } else {
