@@ -514,7 +514,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         try {
           await deps.sessions.recordLlmRequest(screenSession.id, { ...rec, scopeLabel: scopeId });
         } catch (err) {
-          console.error("[orchestrator] failed to persist security screen request snapshot:", err);
+          console.error("[orchestrator] failed to persist security screen request snapshot:", errMessage(err));
         }
       };
       let screenedOverheard: OverheardEntryPayload[] = [];
@@ -2442,7 +2442,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
               try {
                 await deps.sessions.recordLlmRequest(session.id, { ...rec, scopeLabel: scopeId });
               } catch (err) {
-                console.error("[orchestrator] failed to persist LLM request snapshot:", err);
+                console.error("[orchestrator] failed to persist LLM request snapshot:", errMessage(err));
               }
             },
           });
