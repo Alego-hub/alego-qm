@@ -84,7 +84,7 @@ import {
 import { browserRenderableImage, formatBytes, icon, relTime } from "./ui";
 import { appState, renderSidebarTop, switchView, syncUrlFromState } from "./shell";
 import { contextsState, scopeTitle } from "./contexts";
-import { openProjectPage, scopeCronCount, sessionTopbarTpl, setScopedSession } from "./session-scope";
+import { openProjectPage, scopeToolCount, sessionTopbarTpl, setScopedSession } from "./session-scope";
 import {
   addPendingSession,
   dropPendingSession,
@@ -1149,7 +1149,7 @@ export function createChatSurface(
           }
         : null,
       onCrumb: crumb && scope ? () => openProjectPage(scope) : null,
-      cronCount: scope ? scopeCronCount(scope, () => drawActiveChat()) : null,
+      toolCount: scope ? (t) => scopeToolCount(t, scope, () => drawActiveChat()) : null,
       onTool: (tool) => {
         setScopedSession({
           scopeId: scope ?? "",
