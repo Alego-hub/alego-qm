@@ -14,6 +14,7 @@ import {
   Plus,
   RefreshCw,
   Rocket,
+  ShieldCheck,
   type IconNode,
 } from "lucide";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
@@ -65,7 +66,7 @@ import { renderDeploys } from "./deploys";
 import { renderMemory, resetMemoryState } from "./memory";
 import { renderSkills } from "./skills";
 import { contextsState, ensureContexts, renderContexts, resetContextsState, resolveProjectScope } from "./contexts";
-import { appState, isView, type AuthMode, type Me, type View } from "./shell-state";
+import { appState, can, isView, type AuthMode, type Me, type View } from "./shell-state";
 import { trapDialogFocus } from "./dialog-focus";
 export { appState, can, type Me, type View } from "./shell-state";
 
@@ -85,9 +86,11 @@ export const ADMIN_BASE = (() => {
 })();
 export const ADMIN_HOME_URL = `${ADMIN_BASE}/`;
 
-export function syncUrlFromState(): void {
+export function syncUrlFromState(sessionOverride?: string | null): void {
   const chatState = mainConversation().state;
-  const sessionId = splitState.active ? null : (chatState.sessionId ?? chatState.rememberedSessionId);
+  const fromState =
+    sessionOverride !== undefined ? sessionOverride : (chatState.sessionId ?? chatState.rememberedSessionId);
+  const sessionId = splitState.active ? null : fromState;
   const next = deepLinkPath(UI_BASE, appState.currentView, sessionId, contextsState.selected);
   if (`${location.pathname}${location.search}` !== next) history.replaceState(null, "", next);
 }
@@ -144,9 +147,9 @@ const NAV_WORKSPACE_KEY = "web-ui:nav-workspace";
 
 function loadNavOpen(key: string): boolean {
   try {
-    return localStorage.getItem(key) !== "0";
+    return localStorage.getItem(key) === "1";
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -527,28 +530,31 @@ export function renderSidebarTop(): void {
             ${navRow("files", ICON.files, "Files")} ${navRow("crons", ICON.crons, "Crons")}
             ${navRow("keychain", ICON.keychain, "Keychain")} ${navRow("deploys", ICON.deploys, "Apps")}
             ${navRow("memory", ICON.memory, "Memory")} ${navRow("skills", ICON.skills, "Skills")}
+            ${
+              can("admin")
+                ? html`<a class="navrow" href=${ADMIN_HOME_URL} title="Admin">
+                    ${icon(ShieldCheck, 17)}<span>Admin</span>
+                  </a>`
+                : nothing
+            }
           `,
         )}
       </nav>
-      ${
-        appState.currentView === "chats"
-          ? html`
-              <div class="section-label recents-label">
-                <span>Sessions</span>
-                <button
-                  class="web-only-toggle ${sessionsState.webOnly ? "on" : ""}"
-                  type="button"
-                  role="switch"
-                  aria-checked=${sessionsState.webOnly ? "true" : "false"}
-                  title=${sessionsState.webOnly ? "Showing web chats only" : "Hide non-web conversations"}
-                  @click=${toggleWebOnly}
-                >
-                  <span>Web only</span><span class="mini-switch"><span class="mini-knob"></span></span>
-                </button>
-              </div>
-            `
-          : ""
-      }
+      ${html`
+        <div class="section-label recents-label">
+          <span>Sessions</span>
+          <button
+            class="web-only-toggle ${sessionsState.webOnly ? "on" : ""}"
+            type="button"
+            role="switch"
+            aria-checked=${sessionsState.webOnly ? "true" : "false"}
+            title=${sessionsState.webOnly ? "Showing web chats only" : "Hide non-web conversations"}
+            @click=${toggleWebOnly}
+          >
+            <span>Web only</span><span class="mini-switch"><span class="mini-knob"></span></span>
+          </button>
+        </div>
+      `}
     `,
     appState.topEl,
   );
@@ -582,7 +588,6 @@ export function switchView(v: View): void {
   }
   renderSidebarTop();
   syncUrlFromState();
-  if (v !== "chats" && appState.listEl) render(nothing, appState.listEl);
   switch (v) {
     case "chats":
       if (splitState.active) drawCanvas();
