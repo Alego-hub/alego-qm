@@ -11530,14 +11530,27 @@
           actions: [sortControl],
         });
         const activityTime = (s) => (scopeSort === "human" ? s.lastConversationActivity || 0 : s.lastActivity || 0);
+        const attachedScopesLabel = (attached) => {
+          if (!attached.length) return "no scopes attached";
+          const names = attached.map((id) => shortName(id));
+          const shown = names.slice(0, 4).join(", ");
+          const extra = names.length - 4;
+          return extra > 0 ? `${shown} +${plural(extra, "more scope")}` : shown;
+        };
         if (environmentDir.length) {
           const environments = denseList(
             environmentDir,
-            (environment) => ({
-              name: environment.name || shortName(environment.id),
-              preview: plural(environment.attachedScopes?.length || 0, "attached scope"),
-              href: stateToUrl({ view: "history", scope: environment.id, historyKind }),
-            }),
+            (environment) => {
+              const attached = environment.attachedScopes || [];
+              const preview = document.createElement("span");
+              preview.textContent = attachedScopesLabel(attached);
+              if (attached.length) preview.title = attached.map((id) => shortName(id)).join(", ");
+              return {
+                name: environment.name || shortName(environment.id),
+                preview,
+                href: stateToUrl({ view: "history", scope: environment.id, historyKind }),
+              };
+            },
             (environment) => selectScope(environment.id),
             "No named environments.",
           );
@@ -11553,6 +11566,14 @@
             counts.className = "dense-tag";
             counts.textContent = sessionCountsLabel(s.sessions || 0, s.backgroundSessions || 0);
             preview.appendChild(counts);
+            if (s.environmentAttachment) {
+              const env = document.createElement("span");
+              env.className = "dense-tag";
+              env.textContent =
+                "env: " + (s.environmentAttachment.environmentName || shortName(s.environmentAttachment.environmentId));
+              env.title = "This scope is attached to a named environment.";
+              preview.appendChild(env);
+            }
             if (s.lastMessage) preview.appendChild(document.createTextNode(s.lastMessage));
             return {
               name: shortName(s.scopeId),
@@ -11647,6 +11668,34 @@
             title: scopeKind(scope) !== "org" ? shortName(scope) : VIEW_TITLE.history,
             tabs,
           });
+        }
+        const environmentEntry = (environmentDir || []).find((environment) => environment.id === scope);
+        if (environmentEntry && !cronSel) {
+          const attached = environmentEntry.attachedScopes || [];
+          const chips = document.createElement("div");
+          chips.className = "history-empty-scopes";
+          attached.forEach((id) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "history-empty-scope";
+            button.textContent = shortName(id);
+            button.title = id;
+            button.onclick = () => selectScope(id);
+            chips.appendChild(button);
+          });
+          if (!attached.length) {
+            const none = document.createElement("p");
+            none.className = "empty";
+            none.textContent = "No scopes attached.";
+            chips.appendChild(none);
+          }
+          root.appendChild(
+            dataCard(
+              "Attached scopes",
+              plural(attached.length, "scope") + " share this environment's computer and working memory.",
+              chips,
+            ),
+          );
         }
         const cronDeliveryChip = (delivered, label) => {
           if (!delivered) return null;
