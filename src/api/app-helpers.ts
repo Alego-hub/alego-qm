@@ -401,9 +401,30 @@ export function createAppHelpers(deps: AppDeps, app: App) {
   const membershipControlsScope = createMembershipControlsScope(scopeMembershipDeps);
 
   async function authorizesCapabilityScope(
-    claims: Pick<CapabilityClaims, "actorId" | "scopeId" | "scopeVersion">,
+    claims: Pick<CapabilityClaims, "actorId" | "scopeId" | "scopeVersion" | "botActor" | "liveActor" | "members">,
   ): Promise<boolean> {
     const { kind, ref } = parseScopeId(claims.scopeId);
+    if (kind === "channel" && !deps.identity.isInternal(deps.identity.classify(claims.actorId))) return false;
+    const privateChannel =
+      kind === "channel" && (await deps.directory.channelPrivacy?.(ref).catch(() => undefined)) === true;
+    const capabilityMembership = privateChannel
+      ? await deps.directory.channelMembership(ref, claims.actorId).catch(() => undefined)
+      : undefined;
+    const attestedBot =
+      privateChannel &&
+      claims.botActor === true &&
+      claims.liveActor === true &&
+      claims.members?.some((member) => member.id === claims.actorId && member.type === "internal") === true;
+    if (
+      (kind === "channel" &&
+        !(
+          attestedBot ||
+          (capabilityMembership ?? (await principalCanAccessCurrentScope(claims.actorId, claims.scopeId)))
+        )) ||
+      (kind === "group" && !(await principalCanWriteScope(claims.actorId, claims.scopeId)))
+    ) {
+      return false;
+    }
     if (kind !== "group" || deps.projects?.recognizes(ref) !== true) return true;
     return (
       (await principalCanManageScope(claims.actorId, claims.scopeId)) &&

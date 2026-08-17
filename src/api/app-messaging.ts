@@ -339,12 +339,12 @@ export function createMessagingMethods(
         });
       }
     },
-    async upsertChannels(channels, channelMembers, syncedAt) {
-      await deps.directory.replaceChannels(channels, channelMembers, syncedAt);
+    async upsertChannels(channels, channelMembers, syncedAt, channelRosterIds, revocations) {
+      await deps.directory.replaceChannels(channels, channelMembers, syncedAt, channelRosterIds, revocations);
       await h.syncLinkedProjectRosters();
     },
-    async upsertGroups(groupMembers, syncedAt) {
-      await deps.directory.replaceGroups(groupMembers, syncedAt);
+    async upsertGroups(groupMembers, syncedAt, groupIds, groupRosterIds) {
+      await deps.directory.replaceGroups(groupMembers, syncedAt, groupIds, groupRosterIds);
     },
     async setDirectoryWorkspaceUrl(url) {
       await deps.directory.setWorkspaceUrl(url);

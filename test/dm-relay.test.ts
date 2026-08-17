@@ -60,12 +60,16 @@ describe("agent → teammate DM: the cron recipient route (§10)", () => {
     ]);
     await built.app.upsertChannels(
       [
+        { channelId: "C", name: "current" },
         { channelId: "C-eng", name: "eng" },
         { channelId: "C-d1", name: "design-frontend" },
         { channelId: "C-d2", name: "design-backend" },
         { channelId: "C-secret", name: "secret", isPrivate: true },
       ],
-      [{ channelId: "C-secret", principalId: "U-carol" }],
+      [
+        { channelId: "C", principalId: "U-carol" },
+        { channelId: "C-secret", principalId: "U-carol" },
+      ],
     );
     await built.app.upsertGroups([
       { groupId: "G-jrs", principalId: "U-carol" },

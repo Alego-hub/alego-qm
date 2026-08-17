@@ -318,7 +318,9 @@ export interface App {
   listScopeResources(principalId: string, scope: ScopeId): Promise<ScopeResources | null>;
   managesScope(principalId: string, scope: ScopeId): Promise<boolean>;
   membershipControlsScope(scope: ScopeId): Promise<boolean>;
-  authorizesCapabilityScope(claims: Pick<CapabilityClaims, "actorId" | "scopeId" | "scopeVersion">): Promise<boolean>;
+  authorizesCapabilityScope(
+    claims: Pick<CapabilityClaims, "actorId" | "scopeId" | "scopeVersion" | "botActor" | "liveActor" | "members">,
+  ): Promise<boolean>;
   openFileForViewer(id: string, principalId: string): Promise<OpenedFile | null>;
   grant(g: Grant): Promise<void>;
   revokeGrant(ownerScopeId: ScopeId, ref: string, granteeScopeId: ScopeId, revokedBy: string): Promise<void>;
@@ -386,8 +388,19 @@ export interface App {
   ackDeliveryByKey(idempotencyKey: string): Promise<void>;
   setRunDeliveryState(runId: string, state: RunDeliveryState): Promise<boolean>;
   upsertDirectory(members: DirectoryMember[], syncedAt?: number): Promise<void>;
-  upsertChannels(channels: DirectoryChannel[], channelMembers?: ChannelMembership[], syncedAt?: number): Promise<void>;
-  upsertGroups(groupMembers: GroupMembership[], syncedAt?: number): Promise<void>;
+  upsertChannels(
+    channels: DirectoryChannel[],
+    channelMembers?: ChannelMembership[],
+    syncedAt?: number,
+    channelRosterIds?: string[],
+    revocations?: ChannelMembership[],
+  ): Promise<void>;
+  upsertGroups(
+    groupMembers: GroupMembership[],
+    syncedAt?: number,
+    groupIds?: string[],
+    groupRosterIds?: string[],
+  ): Promise<void>;
   setDirectoryWorkspaceUrl(url: string): Promise<void>;
   directoryMeta(): Promise<DirectoryMeta>;
   resolveRecipient(query: string): Promise<RecipientResolution>;

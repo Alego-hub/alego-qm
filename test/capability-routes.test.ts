@@ -64,6 +64,10 @@ describe("capability-token control plane (crons + SOUL)", () => {
         signingSecret: SECRET,
       }),
     );
+    await built.directory.replaceChannels(
+      [{ channelId: "C", name: "eng", isPrivate: false }],
+      ["admin-alice", "U1", "U2", "U8"].map((principalId) => ({ channelId: "C", principalId })),
+    );
     server = createServer(built.app, {
       signingSecret: SECRET,
       scheduler: built.scheduler,
@@ -625,7 +629,7 @@ describe("capability-token control plane (crons + SOUL)", () => {
     assert.equal((await get(`/v1/crons/${id}`, { "x-agent-capability": await capFor("U1") })).status, 404);
   });
 
-  it("get/patch/delete/run of an OWNER cron are denied to another user (403), even in the same channel", async () => {
+  it("another public-channel user can read an OWNER cron but cannot patch, run, or delete it", async () => {
     const created = (await (
       await post(
         "/v1/crons",
@@ -634,7 +638,7 @@ describe("capability-token control plane (crons + SOUL)", () => {
       )
     ).json()) as any;
     const id = created.cron.id;
-    assert.equal((await get(`/v1/crons/${id}`, { "x-agent-capability": await capChannel("U2") })).status, 403);
+    assert.equal((await get(`/v1/crons/${id}`, { "x-agent-capability": await capChannel("U2") })).status, 200);
     assert.equal(
       (await patch(`/v1/crons/${id}`, { action: "hijacked" }, { "x-agent-capability": await capChannel("U2") })).status,
       403,
@@ -735,6 +739,36 @@ describe("capability-token control plane (crons + SOUL)", () => {
     assert.ok(
       dmList.visible.some((c: any) => c.id === id),
       "surfaced read-only in visible",
+    );
+  });
+
+  it("a public channel remains available to an active internal principal outside its current roster", async () => {
+    await built.directory.replaceChannels(
+      [{ channelId: "C", name: "eng", isPrivate: false }],
+      ["admin-alice", "U1", "U2"].map((principalId) => ({ channelId: "C", principalId })),
+    );
+    assert.equal((await get("/v1/soul", { "x-agent-capability": await capChannel("U8") })).status, 200);
+  });
+
+  it("a live verified bot retains private-channel tools without a Slack user principal", async () => {
+    await built.directory.replaceChannels(
+      [{ channelId: "C", name: "eng", isPrivate: true }],
+      ["admin-alice", "U1", "U2"].map((principalId) => ({ channelId: "C", principalId })),
+    );
+    const members = [{ id: "B-LEGACY", type: "internal" as const }];
+    const token = await capFor("B-LEGACY", scopeId("channel", "C"), {
+      botActor: true,
+      liveActor: true,
+      members,
+    });
+    assert.equal((await get("/v1/soul", { "x-agent-capability": token })).status, 200);
+    assert.equal(
+      (
+        await get("/v1/soul", {
+          "x-agent-capability": await capFor("B-LEGACY", scopeId("channel", "C"), { members }),
+        })
+      ).status,
+      403,
     );
   });
 });

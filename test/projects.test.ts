@@ -192,6 +192,52 @@ test("managed groups override Slack membership and historical sessions grant no 
   );
 });
 
+test("capability scope checks follow current shared rosters", async () => {
+  const built = buildApp(testConfig({ dataDir: mkdtempSync(join(tmpdir(), "capability-roster-")) }));
+  await built.app.upsertDirectory([{ principalId: "member", displayName: "Member", type: "internal" }]);
+  await built.directory.replaceChannels(
+    [
+      { channelId: "C-public", name: "public" },
+      { channelId: "C-private", name: "private", isPrivate: true },
+    ],
+    [
+      { channelId: "C-public", principalId: "member" },
+      { channelId: "C-private", principalId: "member" },
+      { channelId: "C-private", principalId: "B1" },
+    ],
+    1,
+  );
+  await built.directory.replaceGroups([{ groupId: "G1", principalId: "member" }], 1);
+
+  assert.equal(await built.app.authorizesCapabilityScope({ actorId: "member", scopeId: "channel:C-private" }), true);
+  assert.equal(await built.app.authorizesCapabilityScope({ actorId: "B1", scopeId: "channel:C-private" }), true);
+  assert.equal(await built.app.authorizesCapabilityScope({ actorId: "member", scopeId: "group:G1" }), true);
+  assert.equal(await built.app.authorizesCapabilityScope({ actorId: "member", scopeId: "channel:C-public" }), true);
+
+  await built.directory.replaceChannels(
+    [
+      { channelId: "C-public", name: "public" },
+      { channelId: "C-private", name: "private", isPrivate: true },
+    ],
+    [],
+    2,
+  );
+  await built.directory.replaceGroups([], 2);
+
+  assert.equal(await built.app.authorizesCapabilityScope({ actorId: "member", scopeId: "channel:C-private" }), false);
+  assert.equal(await built.app.authorizesCapabilityScope({ actorId: "member", scopeId: "group:G1" }), false);
+  assert.equal(await built.app.authorizesCapabilityScope({ actorId: "member", scopeId: "channel:C-public" }), true);
+});
+
+test("channel capabilities bridge legacy public rosters but still honor deactivation", async () => {
+  const built = buildApp(testConfig({ dataDir: mkdtempSync(join(tmpdir(), "capability-transition-")) }));
+  await built.app.upsertDirectory([{ principalId: "member", displayName: "Member", type: "internal" }]);
+  await built.directory.replaceChannels([{ channelId: "C-public", name: "public" }], []);
+  assert.equal(await built.app.authorizesCapabilityScope({ actorId: "member", scopeId: "channel:C-public" }), true);
+  await built.identity.deactivate("member");
+  assert.equal(await built.app.authorizesCapabilityScope({ actorId: "member", scopeId: "channel:C-public" }), false);
+});
+
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, resolve));
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

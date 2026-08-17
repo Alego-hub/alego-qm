@@ -67,6 +67,7 @@ interface Incoming {
   kind: "dm" | "channel";
   channel: string;
   userId: string;
+  actor?: ActorAssertion;
   authorName?: string;
   rawText: string;
   files: SlackFile[];
@@ -189,9 +190,14 @@ export function createTurnHandler(deps: {
       inc.recvWall !== undefined && inc.eventTs !== undefined
         ? Math.max(0, Math.round(inc.recvWall - inc.eventTs * 1000))
         : undefined;
-    const classified = inc.prefetched
-      ? { actor: inc.prefetched.actor, ...(inc.prefetched.timezone ? { timezone: inc.prefetched.timezone } : {}) }
-      : await classifyUserCached(client, inc.userId);
+    let classified: { actor: ActorAssertion; timezone?: string };
+    if (inc.actor) classified = { actor: inc.actor };
+    else if (inc.prefetched)
+      classified = {
+        actor: inc.prefetched.actor,
+        ...(inc.prefetched.timezone ? { timezone: inc.prefetched.timezone } : {}),
+      };
+    else classified = await classifyUserCached(client, inc.userId);
     const actor = classified.actor;
     const timezone = classified.timezone;
     const text = stripMention(inc.rawText, ids.botUserId);
@@ -249,56 +255,8 @@ export function createTurnHandler(deps: {
       replyThreadTs = root;
     }
 
-    if (!inc.unprompted) {
-      const intercepted = await maybeInterceptStop({
-        text,
-        threadRef,
-        getInFlightRun: (ref) =>
-          inFlightRunByThread.get(ref) ??
-          fetchActiveRunForThread(ref).catch(swallowAs("slack: active-run lookup", undefined)),
-        signalAbort: signalRunAbort,
-      }).catch(swallowAs("slack: abort signal", true));
-      if (intercepted) return;
-    }
-
     let queuedRunId: string | undefined;
     let taskList: TaskListPresenter | undefined;
-    const ack = inc.unprompted
-      ? undefined
-      : createAckPresenter({
-          postAck: async (text) => {
-            const rendered = toSlackMrkdwn(text);
-            if (await taskList?.addLead(rendered)) return;
-            const ts = await postReply(rendered);
-            if (ts) await taskList?.attach(ts, rendered);
-          },
-          addReaction: (name) => client.reactions.add({ channel: inc.channel, timestamp: inc.ts, name }).then(() => {}),
-          removeReaction: (name) =>
-            client.reactions.remove({ channel: inc.channel, timestamp: inc.ts, name }).then(() => {}),
-          emojiCandidates: [...DEFAULT_ACK_REACTIONS],
-          emojiPick: ackEmoji.requestAckEmoji(text, ackEmoji.ackPickCandidates(client), {
-            channel: inc.channel,
-            ts: inc.ts,
-          }),
-        });
-    if (!inc.unprompted) {
-      taskList = createTaskListPresenter({
-        post: (text, blocks) => postReply(text, blocks),
-        update: (ts, text, blocks) =>
-          client.chat.update({ channel: inc.channel, ts, text, blocks, ...botIdentityArgs() }).then(() => {
-            mirrorSelfPost(inc.channel, ts, text, { sub: replyThreadTs, editedAt: Date.now() });
-          }),
-        checkpoint: async (ts) => {
-          if (queuedRunId) await checkpointRunEditRef(queuedRunId, ts);
-        },
-        remove: (ts) => client.chat.delete({ channel: inc.channel, ts }).then(() => {}),
-        onSurfacePosted: () => ack?.onSurfacePosted(),
-        onError: (error) => console.error("[slack-plugin] task-list update failed:", (error as Error).message),
-      });
-    }
-    const settleAck = async (): Promise<void> => {
-      await ack?.settle().catch(swallowAs("slack: ack settle", undefined));
-    };
 
     if (inc.kind === "channel") {
       const membership = inc.prefetched
@@ -338,7 +296,6 @@ export function createTurnHandler(deps: {
           };
 
     if (audience.some((a) => a.isExternalGuest) && !(await externalParticipantsEnabled())) {
-      await settleAck();
       if (!inc.unprompted) {
         await ephemeralOrSay(
           "I can't respond here — this conversation isn't fully internal. Try a DM or a fully-internal channel.",
@@ -346,6 +303,55 @@ export function createTurnHandler(deps: {
       }
       return;
     }
+
+    if (!inc.unprompted) {
+      const intercepted = await maybeInterceptStop({
+        text,
+        threadRef,
+        getInFlightRun: (ref) =>
+          inFlightRunByThread.get(ref) ??
+          fetchActiveRunForThread(ref).catch(swallowAs("slack: active-run lookup", undefined)),
+        signalAbort: signalRunAbort,
+      }).catch(swallowAs("slack: abort signal", true));
+      if (intercepted) return;
+    }
+
+    const ack = inc.unprompted
+      ? undefined
+      : createAckPresenter({
+          postAck: async (text) => {
+            const rendered = toSlackMrkdwn(text);
+            if (await taskList?.addLead(rendered)) return;
+            const ts = await postReply(rendered);
+            if (ts) await taskList?.attach(ts, rendered);
+          },
+          addReaction: (name) => client.reactions.add({ channel: inc.channel, timestamp: inc.ts, name }).then(() => {}),
+          removeReaction: (name) =>
+            client.reactions.remove({ channel: inc.channel, timestamp: inc.ts, name }).then(() => {}),
+          emojiCandidates: [...DEFAULT_ACK_REACTIONS],
+          emojiPick: ackEmoji.requestAckEmoji(text, ackEmoji.ackPickCandidates(client), {
+            channel: inc.channel,
+            ts: inc.ts,
+          }),
+        });
+    if (!inc.unprompted) {
+      taskList = createTaskListPresenter({
+        post: (text, blocks) => postReply(text, blocks),
+        update: (ts, text, blocks) =>
+          client.chat.update({ channel: inc.channel, ts, text, blocks, ...botIdentityArgs() }).then(() => {
+            mirrorSelfPost(inc.channel, ts, text, { sub: replyThreadTs, editedAt: Date.now() });
+          }),
+        checkpoint: async (ts) => {
+          if (queuedRunId) await checkpointRunEditRef(queuedRunId, ts);
+        },
+        remove: (ts) => client.chat.delete({ channel: inc.channel, ts }).then(() => {}),
+        onSurfacePosted: () => ack?.onSurfacePosted(),
+        onError: (error) => console.error("[slack-plugin] task-list update failed:", (error as Error).message),
+      });
+    }
+    const settleAck = async (): Promise<void> => {
+      await ack?.settle().catch(swallowAs("slack: ack settle", undefined));
+    };
 
     {
       const containerName = inc.kind === "dm" ? actor.displayName?.trim() || undefined : channelName;
@@ -433,6 +439,7 @@ export function createTurnHandler(deps: {
               : { entryTs: inc.ts, ...(actor.isBot || inc.botAuthored ? {} : { liveActor: true }) }),
           }
         : { liveActor: true, triggerTs: inc.ts }),
+      ...(actor.isBot ? { botActor: true } : {}),
       ...(conversationHeader ? { conversationHeader } : {}),
       ...(priorTurns ? { priorTurns } : {}),
       ...(overheard ? { overheard } : {}),
