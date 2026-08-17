@@ -89,21 +89,23 @@ export async function checkSlackCredentials(
 }
 
 export async function stagingApiHeaders(
-  orgId: string,
   principalId: string,
   sourceSecret: string,
   portalIdentitySecret: string,
+  method: string,
   path: string,
+  body = "",
+  base: Record<string, string> = {},
   nowMs = Date.now(),
 ): Promise<Record<string, string>> {
   const portalIdentity = await mintSignedPayload({ p: principalId, exp: nowMs + 60_000 }, portalIdentitySecret);
   return signedRequestHeaders(
     sourceSecret,
-    "GET",
+    method,
     path,
-    "",
+    body,
     {
-      "x-admin-actor": `${principalId}@${orgId}`,
+      ...base,
       [PORTAL_IDENTITY_HEADER]: portalIdentity,
     },
     Math.floor(nowMs / 1000),
@@ -125,9 +127,15 @@ export async function checkLiveSession(
   const root = baseUrl.replace(/\/+$/, "");
   const request = async (method: "GET" | "POST", path: string, body?: unknown, admin = false): Promise<unknown> => {
     const raw = body === undefined ? "" : JSON.stringify(body);
-    const headers = admin
-      ? await stagingApiHeaders(orgId, principalId, sourceSecret, portalIdentitySecret, path)
-      : signedRequestHeaders(sourceSecret, method, path, raw);
+    const headers = await stagingApiHeaders(
+      principalId,
+      sourceSecret,
+      portalIdentitySecret,
+      method,
+      path,
+      raw,
+      admin ? { "x-admin-actor": `${principalId}@${orgId}` } : {},
+    );
     const response = await fetchImpl(`${root}${path}`, {
       method,
       headers: { ...headers, ...(raw ? { "content-type": "application/json" } : {}) },
@@ -226,7 +234,9 @@ async function checkApi(
 ): Promise<void> {
   const path = `/v1/admin/sessions?scope=${encodeURIComponent(`org:${orgId}`)}&limit=5&_smoke=${randomUUID()}`;
   const response = await fetch(`http://127.0.0.1:${port}${path}`, {
-    headers: await stagingApiHeaders(orgId, principalId, sourceSecret, portalIdentitySecret, path),
+    headers: await stagingApiHeaders(principalId, sourceSecret, portalIdentitySecret, "GET", path, "", {
+      "x-admin-actor": `${principalId}@${orgId}`,
+    }),
   });
   const body = await response.text();
   if (!response.ok) throw new Error(`staging session API returned ${response.status}: ${body.slice(0, 500)}`);
@@ -249,13 +259,9 @@ type PostdeployConfig = Pick<
   | "slack"
 >;
 
-async function runPostdeploySmoke(config: PostdeployConfig): Promise<void> {
-  const { databaseUrl, orgId, portalIdentitySecret, signingSecret: sourceSecret } = config;
+async function checkDatabase(config: PostdeployConfig): Promise<void> {
+  const { databaseUrl } = config;
   if (!databaseUrl) throw new Error("postdeploy smoke requires DATABASE_URL");
-  if (!orgId) throw new Error("postdeploy smoke requires ORG_ID");
-  if (!sourceSecret) throw new Error("postdeploy smoke requires CORE_SIGNING_SECRET");
-  if (!portalIdentitySecret) throw new Error("postdeploy smoke requires PORTAL_IDENTITY_SECRET");
-
   const pg = (await import("pg")).default;
   const client = new pg.Client({
     connectionString: databaseUrl,
@@ -275,6 +281,15 @@ async function runPostdeploySmoke(config: PostdeployConfig): Promise<void> {
   } finally {
     await client.end();
   }
+}
+
+async function runPostdeploySmoke(config: PostdeployConfig): Promise<void> {
+  const { orgId, portalIdentitySecret, signingSecret: sourceSecret } = config;
+  if (!orgId) throw new Error("postdeploy smoke requires ORG_ID");
+  if (!sourceSecret) throw new Error("postdeploy smoke requires CORE_SIGNING_SECRET");
+  if (!portalIdentitySecret) throw new Error("postdeploy smoke requires PORTAL_IDENTITY_SECRET");
+
+  await checkDatabase(config);
 
   await checkApi(
     orgId,
@@ -292,7 +307,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const config = loadConfig();
   if (process.argv[2] === "session") {
     await checkLiveSession(config, process.argv[3] ?? `http://127.0.0.1:${config.port}`);
-    console.log("live session smoke passed");
+    if (config.databaseUrl) await checkDatabase(config);
+    console.log("database and live session smoke passed");
   } else {
     await runPostdeploySmoke(config);
   }
