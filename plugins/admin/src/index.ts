@@ -313,6 +313,7 @@ const READS = [
   "ambient-judgments",
   "ack-emoji-picks",
   "slack-installation",
+  "slack-emoji",
   "model-providers",
   "custom-providers",
 ];

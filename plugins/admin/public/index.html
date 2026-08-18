@@ -6573,6 +6573,11 @@
           renderChips();
           syncDefault();
         }
+        function autoSaveAckEmoji() {
+          updateSectionDirty("ack-emoji");
+          const btn = sectionButton("ack-emoji");
+          if (btn && !btn.disabled) btn.click();
+        }
         function initAckEmojiPicker() {
           const chips = $("ack-emoji-chips");
           const addInput = $("ack-emoji-add");
@@ -6601,6 +6606,7 @@
               x.onclick = () => {
                 ackEmojiNames = ackEmojiNames.filter((v) => v !== name);
                 renderAckChips();
+                autoSaveAckEmoji();
               };
               chip.appendChild(label);
               chip.appendChild(x);
@@ -6623,7 +6629,11 @@
               .replace(/^:+|:+$/g, "")
               .toLowerCase();
             if (!name || !/^[a-z0-9_+-]+$/.test(name)) return;
-            if (!ackEmojiNames.includes(name)) ackEmojiNames.push(name);
+            if (!ackEmojiNames.includes(name)) {
+              ackEmojiNames.push(name);
+              renderAckChips();
+              autoSaveAckEmoji();
+            }
             addInput.value = "";
             renderAckChips();
           };
@@ -6636,7 +6646,7 @@
           };
           if (!ackEmojiCatalogLoaded) {
             ackEmojiCatalogLoaded = true;
-            api("GET", "/v1/admin/slack-emoji")
+            api("GET", "/api/slack-emoji")
               .then((res) => {
                 if (res && res.ok && res.data && res.data.emoji) ackEmojiCatalog = res.data.emoji;
                 renderAckChips();
