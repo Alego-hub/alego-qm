@@ -14,7 +14,7 @@ const envSlackAttempted = Boolean(process.env.SLACK_BOT_TOKEN || process.env.SLA
 let slackEnvironmentState: "absent" | "configured" | "partial" = "absent";
 if (slackConfig) slackEnvironmentState = "configured";
 else if (envSlackAttempted) slackEnvironmentState = "partial";
-const server = createServer(built.app, serverDeps(config, built, slackEnvironmentState));
+const server = createServer(built.app, serverDeps(config, built, slackEnvironmentState, envSlackConfig?.botToken));
 
 await built.config.hydrate?.();
 await built.refreshCustomProviders();

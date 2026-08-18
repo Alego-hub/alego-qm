@@ -126,6 +126,7 @@ export function createTurnHandler(deps: {
   serializer: ConversationSerializer;
   approvals: Approvals;
   ackEmoji: AckEmojiPicker;
+  ackEmojiCandidates?: () => readonly string[] | null;
   ids: BotIdentity;
   threads: ReturnType<typeof createThreadTracker>;
   deduper: ReturnType<typeof createDeduper>;
@@ -328,7 +329,10 @@ export function createTurnHandler(deps: {
           addReaction: (name) => client.reactions.add({ channel: inc.channel, timestamp: inc.ts, name }).then(() => {}),
           removeReaction: (name) =>
             client.reactions.remove({ channel: inc.channel, timestamp: inc.ts, name }).then(() => {}),
-          emojiCandidates: [...DEFAULT_ACK_REACTIONS],
+          emojiCandidates: (() => {
+            const override = deps.ackEmojiCandidates?.();
+            return override?.length ? [...override] : [...DEFAULT_ACK_REACTIONS];
+          })(),
           emojiPick: ackEmoji.requestAckEmoji(text, ackEmoji.ackPickCandidates(client), {
             channel: inc.channel,
             ts: inc.ts,

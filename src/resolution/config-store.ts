@@ -85,6 +85,11 @@ export interface PersistedWebuiModels {
   scopeId: ScopeId;
   ids: string[];
 }
+export interface PersistedAckEmoji {
+  scopeId: ScopeId;
+  names: string[];
+}
+
 export interface PersistedPeopleDirectoryUrl {
   scopeId: ScopeId;
   url: string;
@@ -189,6 +194,9 @@ export interface ScopedConfigStore {
   setWebuiModels(id: ScopeId, ids: string[] | null): void;
   getBaseModelDurable(id: ScopeId): Promise<string | null>;
   getWebuiModelsDurable(id: ScopeId): Promise<string[] | null>;
+  getAckEmoji(id: ScopeId): string[] | null;
+  setAckEmoji(id: ScopeId, names: string[] | null): void;
+  getAckEmojiDurable(id: ScopeId): Promise<string[] | null>;
   getPeopleDirectoryUrl(id: ScopeId): string | null;
   setPeopleDirectoryUrl(id: ScopeId, url: string | null): void;
   getBranding(id: ScopeId): OrgBranding | null;
@@ -229,6 +237,7 @@ export function createMemoryConfigStore(
     interactiveFastMode?: DurableMap<PersistedScopedFlag>;
     webuiModels?: DurableMap<PersistedWebuiModels>;
     peopleDirectoryUrls?: DurableMap<PersistedPeopleDirectoryUrl>;
+    ackEmoji?: DurableMap<PersistedAckEmoji>;
     branding?: DurableMap<PersistedBranding>;
     browseMaxSteps?: DurableMap<PersistedBrowseMaxSteps>;
     browseModels?: DurableMap<PersistedBrowseModel>;
@@ -254,6 +263,7 @@ export function createMemoryConfigStore(
   let interactiveFastMode = false;
   const webuiModels = new Map<ScopeId, string[]>();
   const peopleDirectoryUrls = new Map<ScopeId, string>();
+  const ackEmoji = new Map<ScopeId, string[]>();
   const branding = new Map<ScopeId, OrgBranding>();
   const browseMaxSteps = new Map<ScopeId, number>();
   const browseModels = new Map<ScopeId, string>();
@@ -273,6 +283,7 @@ export function createMemoryConfigStore(
   const interactiveFastModeStore = opts.interactiveFastMode ?? createMemoryMap<PersistedScopedFlag>();
   const webuiModelStore = opts.webuiModels ?? createMemoryMap<PersistedWebuiModels>();
   const peopleDirectoryUrlStore = opts.peopleDirectoryUrls ?? createMemoryMap<PersistedPeopleDirectoryUrl>();
+  const ackEmojiStore = opts.ackEmoji ?? createMemoryMap<PersistedAckEmoji>();
   const brandingStore = opts.branding ?? createMemoryMap<PersistedBranding>();
   const browseMaxStepsStore = opts.browseMaxSteps ?? createMemoryMap<PersistedBrowseMaxSteps>();
   const browseModelStore = opts.browseModels ?? createMemoryMap<PersistedBrowseModel>();
@@ -424,6 +435,7 @@ export function createMemoryConfigStore(
           interactiveFastMode = (await interactiveFastModeStore.get(org))?.on ?? false;
           for (const r of await webuiModelStore.all()) webuiModels.set(r.scopeId, r.ids);
           for (const r of await peopleDirectoryUrlStore.all()) peopleDirectoryUrls.set(r.scopeId, r.url);
+          for (const r of await ackEmojiStore.all()) ackEmoji.set(r.scopeId, r.names);
           for (const r of await brandingStore.all()) branding.set(r.scopeId, r.branding);
           for (const r of await browseMaxStepsStore.all()) browseMaxSteps.set(r.scopeId, r.steps);
           for (const r of await browseModelStore.all()) browseModels.set(r.scopeId, r.modelId);
@@ -810,6 +822,21 @@ export function createMemoryConfigStore(
     },
     getWebuiModelsDurable: async (id) =>
       (await webuiModelStore.get(id))?.ids ?? (await webuiModelStore.get(org))?.ids ?? null,
+    getAckEmoji: (id) => ackEmoji.get(id) ?? null,
+    setAckEmoji(id, names) {
+      if (!names || !names.length) {
+        ackEmoji.delete(id);
+        persist(`ackEmoji:${id}`, "ack emoji", () => ackEmojiStore.delete(id));
+      } else {
+        ackEmoji.set(id, names);
+        persist(`ackEmoji:${id}`, "ack emoji", () => ackEmojiStore.put(id, { scopeId: id, names }));
+      }
+    },
+    getAckEmojiDurable: async (id) => {
+      const pending = pendingWrites.get(`ackEmoji:${id}`);
+      if (pending) await pending;
+      return (await ackEmojiStore.get(id))?.names ?? null;
+    },
     getPeopleDirectoryUrl: (id) => peopleDirectoryUrls.get(id) ?? null,
     setPeopleDirectoryUrl(id, url) {
       if (url === null) {
@@ -1013,6 +1040,7 @@ export function createMemoryConfigStore(
         `branding:${id}`,
         ...(id === org ? [`approvedHarnesses:${org}`, `orgAmbient:${org}`, `interactiveFastMode:${org}`] : []),
         `channelHeaderPin:${id}`,
+        `ackEmoji:${id}`,
         ...(id === org ? [`approvedHarnesses:${org}`, `orgAmbient:${org}`] : []),
       ];
       await Promise.all(

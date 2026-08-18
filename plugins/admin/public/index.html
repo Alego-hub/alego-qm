@@ -4511,6 +4511,30 @@
                     ><span class="status" id="st-people-directory-url"></span>
                   </div>
                 </section>
+                <section class="card hidden" id="card-ack-emoji">
+                  <div class="head">
+                    <h2>Slack ack emoji</h2>
+                    <p>
+                      The emoji the bot may react with to acknowledge a Slack message, org-wide. Add names from the
+                      workspace's emoji (custom and standard). Remove every chip to restore the built-in rotation.
+                    </p>
+                  </div>
+                  <div class="body">
+                    <div id="ack-emoji-chips" style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center">
+                      <input
+                        id="ack-emoji-add"
+                        list="ack-emoji-catalog"
+                        placeholder="+ Add emoji"
+                        style="max-width: 240px"
+                      />
+                      <datalist id="ack-emoji-catalog"></datalist>
+                    </div>
+                  </div>
+                  <div class="foot">
+                    <button class="primary" data-save="ack-emoji">Save</button
+                    ><span class="status" id="st-ack-emoji"></span>
+                  </div>
+                </section>
                 <section class="card setting-row hidden" id="card-browse-model">
                   <div class="head">
                     <h2>Browse model</h2>
@@ -4963,6 +4987,9 @@
       let memDraftScope = null;
       let cronDestinationEditId = null;
       let webuiModelIds = [];
+      let ackEmojiNames = [];
+      let ackEmojiCatalog = {};
+      let ackEmojiCatalogLoaded = false;
       const transcriptVisibility = { thinking: true, toolResults: true };
 
       const API_BASE = "__ADMIN_BASE__";
@@ -6546,9 +6573,87 @@
           renderChips();
           syncDefault();
         }
+        function initAckEmojiPicker() {
+          const chips = $("ack-emoji-chips");
+          const addInput = $("ack-emoji-add");
+          const renderAckChips = () => {
+            chips.querySelectorAll("[data-chip]").forEach((n) => n.remove());
+            ackEmojiNames.forEach((name) => {
+              const chip = document.createElement("span");
+              chip.dataset.chip = name;
+              chip.style.cssText =
+                "display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--border, #d4d4d4);border-radius:999px;font-size:13px";
+              const label = document.createElement("span");
+              const url = ackEmojiCatalog[name];
+              if (url) {
+                const img = document.createElement("img");
+                img.src = url;
+                img.alt = name;
+                img.style.cssText = "width:16px;height:16px;vertical-align:middle;margin-right:4px";
+                label.appendChild(img);
+              }
+              label.appendChild(document.createTextNode(":" + name + ":"));
+              const x = document.createElement("button");
+              x.type = "button";
+              x.textContent = "×";
+              x.setAttribute("aria-label", "Remove " + name);
+              x.style.cssText = "border:0;background:none;cursor:pointer;padding:0;font-size:14px;line-height:1";
+              x.onclick = () => {
+                ackEmojiNames = ackEmojiNames.filter((v) => v !== name);
+                renderAckChips();
+              };
+              chip.appendChild(label);
+              chip.appendChild(x);
+              chips.insertBefore(chip, addInput);
+            });
+            const dl = $("ack-emoji-catalog");
+            dl.textContent = "";
+            Object.keys(ackEmojiCatalog)
+              .filter((n) => !ackEmojiNames.includes(n))
+              .sort()
+              .forEach((n) => {
+                const o = document.createElement("option");
+                o.value = n;
+                dl.appendChild(o);
+              });
+          };
+          const addEmoji = () => {
+            const name = addInput.value
+              .trim()
+              .replace(/^:+|:+$/g, "")
+              .toLowerCase();
+            if (!name || !/^[a-z0-9_+-]+$/.test(name)) return;
+            if (!ackEmojiNames.includes(name)) ackEmojiNames.push(name);
+            addInput.value = "";
+            renderAckChips();
+          };
+          addInput.onchange = addEmoji;
+          addInput.onkeydown = (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addEmoji();
+            }
+          };
+          if (!ackEmojiCatalogLoaded) {
+            ackEmojiCatalogLoaded = true;
+            api("GET", "/v1/admin/slack-emoji")
+              .then((res) => {
+                if (res && res.ok && res.data && res.data.emoji) ackEmojiCatalog = res.data.emoji;
+                renderAckChips();
+              })
+              .catch(() => {});
+          }
+          renderAckChips();
+        }
         const showPeopleDirectory = scope.startsWith("org:");
         $("card-people-directory").classList.toggle("hidden", !showPeopleDirectory);
         if (showPeopleDirectory) $("people-directory-url").value = r.data.peopleDirectoryUrl || "";
+        const showAckEmoji = scope.startsWith("org:") && "ackEmoji" in r.data;
+        $("card-ack-emoji").classList.toggle("hidden", !showAckEmoji);
+        if (showAckEmoji) {
+          ackEmojiNames = Array.isArray(r.data.ackEmoji) ? [...r.data.ackEmoji] : [];
+          initAckEmojiPicker();
+        }
         const showBranding = scope.startsWith("org:") && "branding" in r.data;
         $("card-branding").classList.toggle("hidden", !showBranding);
         if (showBranding) {
@@ -8039,6 +8144,7 @@
           return { ids };
         },
         "people-directory-url": () => ({ url: $("people-directory-url").value.trim() }),
+        "ack-emoji": () => ({ names: ackEmojiNames }),
         branding: () => ({
           accent: $("branding-accent").value.trim(),
           mark: $("branding-mark").value.trim(),
@@ -8064,6 +8170,7 @@
         "approved-harnesses": "st-approved-harnesses",
         "webui-models": "st-webui-models",
         "people-directory-url": "st-people-directory-url",
+        "ack-emoji": "st-ack-emoji",
         "browse-max-steps": "st-browse-max-steps",
         "turn-wall-clock": "st-turn-wall-clock",
         "browse-model": "st-browse-model",
@@ -8076,6 +8183,7 @@
         "approved-harnesses",
         "webui-models",
         "people-directory-url",
+        "ack-emoji",
         "browse-max-steps",
         "turn-wall-clock",
         "browse-model",

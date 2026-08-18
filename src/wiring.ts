@@ -18,6 +18,7 @@ import {
   type PersistedApprovedHarnesses,
   type PersistedWebuiModels,
   type PersistedPeopleDirectoryUrl,
+  type PersistedAckEmoji,
   type PersistedBranding,
   type PersistedBrowseMaxSteps,
   type PersistedBrowseModel,
@@ -451,6 +452,7 @@ export function buildApp(
     interactiveFastMode: artifactMap<PersistedScopedFlag>("interactive_fast_mode_flag"),
     webuiModels: artifactMap<PersistedWebuiModels>("webui_model_configs"),
     peopleDirectoryUrls: artifactMap<PersistedPeopleDirectoryUrl>("people_directory_urls"),
+    ackEmoji: artifactMap<PersistedAckEmoji>("ack_emoji"),
     branding: artifactMap<PersistedBranding>("branding_configs"),
     browseMaxSteps: artifactMap<PersistedBrowseMaxSteps>("browse_max_steps_configs"),
     browseModels: artifactMap<PersistedBrowseModel>("browse_model_configs"),
@@ -1555,6 +1557,7 @@ export function serverDeps(
   config: Config,
   built: BuiltApp,
   slackEnvironmentState: "absent" | "configured" | "partial" = "absent",
+  slackEnvBotToken?: string,
 ): Omit<ServerDeps, "control"> {
   const configuredModel = configuredModelForHarness(config, config.harness);
   return {
@@ -1579,6 +1582,7 @@ export function serverDeps(
     connectorTokens: built.connectorTokens,
     slackInstallation: built.slackInstallation,
     slackEnvironmentState,
+    ...(slackEnvBotToken ? { slackEnvBotToken } : {}),
     resolveClient: built.resolveClient,
     consentLinks: built.consentLinks,
     secretDrops: built.secretDrops,

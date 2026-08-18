@@ -1,3 +1,4 @@
+import { parseAckEmoji } from "../../slack/config.ts";
 import { orgId as configOrgId } from "../../config.ts";
 import type { ServerDeps } from "../deps.ts";
 import type { ApiCtx } from "./route.ts";
@@ -503,6 +504,34 @@ export const ADMIN_RESOURCES: readonly AdminResource[] = [
         return { value: url || null };
       },
       (deps, scope, url) => deps.config!.setPeopleDirectoryUrl(scope, url),
+    ),
+  },
+  {
+    id: "ack-emoji",
+    kind: "string-list",
+    target: "org",
+    clearable: true,
+    label:
+      "Slack ack emoji (names the bot may react with to acknowledge a message). Empty restores the built-in rotation.",
+    readKey: "ackEmoji",
+    get: (deps, scope) => deps.config!.getAckEmoji(scope),
+    apply: generic<string[] | null>(
+      (body, { scope }) => {
+        const bad = orgOnly(scope, "the ack emoji set is org-wide");
+        if (bad) return bad;
+        const raw = (body as { names?: unknown }).names;
+        if (raw !== undefined && raw !== null && !Array.isArray(raw)) {
+          return { error: "ack-emoji requires { names: string[] } (empty list restores the default rotation)" };
+        }
+        const input = Array.isArray(raw) ? raw.map((v) => (typeof v === "string" ? v : "")).join(",") : "";
+        const names = parseAckEmoji(input);
+        const supplied = Array.isArray(raw) ? raw.filter((v) => typeof v === "string" && v.trim()).length : 0;
+        if (supplied && names.length !== supplied) {
+          return { error: "ack-emoji names must be Slack emoji names (lowercase letters, digits, _ + -)" };
+        }
+        return { value: names.length ? names : null };
+      },
+      (deps, scope, names) => deps.config!.setAckEmoji(scope, names),
     ),
   },
   {

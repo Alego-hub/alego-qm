@@ -23,6 +23,18 @@ export interface SlackPluginConfig {
   devIntrospection?: { port: number };
 }
 
+export function parseAckEmoji(raw: string | undefined): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of (raw ?? "").split(/[\s,]+/)) {
+    const name = part.replace(/^:+/, "").replace(/:+$/, "").trim().toLowerCase();
+    if (!name || seen.has(name) || !/^[a-z0-9_+-]+$/.test(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
 export function slackPluginConfigFromEnv(env: Record<string, string | undefined>): SlackPluginConfig | null {
   const eventsMode = env.SLACK_EVENTS_MODE?.trim() === "http" ? "http" : "socket";
   if (!env.SLACK_BOT_TOKEN) return null;

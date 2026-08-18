@@ -60,6 +60,7 @@ interface DirectoryPush {
 
 export interface SlackCoreClient {
   externalSlackParticipants(): Promise<boolean>;
+  ackEmojiOverride(): Promise<string[] | null>;
   surfaceHeaderFacts(scope: ScopeId): Promise<{ agentLabel?: string; modelName: string }>;
   channelHeaderPinEnabled(scope: ScopeId): Promise<boolean>;
   onScopeModelChanged(listener: (scope: ScopeId) => void): void;
@@ -129,6 +130,10 @@ export function createSlackCoreClient(deps: SlackCoreClientDeps): SlackCoreClien
   return {
     async externalSlackParticipants() {
       return (await deps.config.getExternalSlackParticipantsDurable(orgScope)) === true;
+    },
+
+    async ackEmojiOverride() {
+      return await deps.config.getAckEmojiDurable(orgScope);
     },
 
     async surfaceHeaderFacts(scope) {
