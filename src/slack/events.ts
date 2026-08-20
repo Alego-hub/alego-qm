@@ -252,6 +252,9 @@ export function registerSlackEvents(
     await forceDirectorySync(client, e.channel, principalId);
   });
 
+  app.event("assistant_thread_started", async () => {});
+  app.event("assistant_thread_context_changed", async () => {});
+
   app.event("reaction_added", async ({ event, body, client }: any) => {
     await handleReactionEvent(event as SlackReactionEvent, body as any, client, true);
   });
