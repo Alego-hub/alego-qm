@@ -1,4 +1,5 @@
 import { sleep } from "./util.ts";
+import { messageWithForwardedContent, type SlackMessageAttachment } from "./forwards.ts";
 
 export interface IncomingAttachment {
   name: string;
@@ -31,6 +32,23 @@ export interface SlackFile {
   user?: string;
 }
 
+export async function hydrateSlackFiles(
+  files: readonly SlackFile[],
+  lookup: (fileId: string) => Promise<SlackFile | undefined>,
+): Promise<SlackFile[]> {
+  return Promise.all(
+    files.map(async (file) => {
+      if (!file.id || file.url_private || file.url_private_download) return file;
+      try {
+        const hydrated = await lookup(file.id);
+        return hydrated ? { ...file, ...hydrated, ...(file.user ? { user: file.user } : {}) } : file;
+      } catch {
+        return file;
+      }
+    }),
+  );
+}
+
 export const MAX_ATTACHMENT_BYTES = 1_000_000_000;
 
 export function isOversize(file: Pick<SlackFile, "size">): boolean {
@@ -44,6 +62,7 @@ export interface ThreadMessage {
   bot_id?: string;
   subtype?: string;
   files?: SlackFile[];
+  attachments?: SlackMessageAttachment[];
 }
 
 export function collectEarlierThreadFiles(
@@ -59,7 +78,7 @@ export function collectEarlierThreadFiles(
     if (m.ts === opts.triggerTs) continue;
     const isBot = (m.user && m.user === opts.botUserId) || (opts.ownBotId !== "" && m.bot_id === opts.ownBotId);
     if (isBot) continue;
-    for (const f of m.files ?? []) {
+    for (const f of messageWithForwardedContent(m).files) {
       if (f.id && seen.has(f.id)) continue;
       if (f.id) seen.add(f.id);
       out.push(f.user || !m.user ? f : { ...f, user: m.user });

@@ -118,9 +118,14 @@ class FakeSlackClient {
     },
     get: async () => ({}),
   };
+  readonly filesById = new Map<string, any>();
+  readonly fileInfoCalls: string[] = [];
   readonly files = {
     uploadV2: async () => ({ ok: true }),
-    info: async () => ({ file: {} }),
+    info: async ({ file }: { file: string }) => {
+      this.fileInfoCalls.push(file);
+      return { file: this.filesById.get(file) ?? {} };
+    },
   };
   readonly bots = { info: async ({ bot }: { bot: string }) => ({ bot: this.botsById.get(bot) }) };
 
@@ -458,6 +463,86 @@ test("a DM becomes one scoped live turn and one Slack reply", async () => {
       f.client.posts.map((p) => p.text),
       ["agent reply"],
     );
+  } finally {
+    await f.stop();
+  }
+});
+
+test("a forwarded Slack message reaches the turn with labeled nested content and files", async (t) => {
+  const fetchMock = t.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response("data", {
+        status: 200,
+        headers: { "content-type": "text/plain", "content-length": "4" },
+      }),
+  );
+  const f = await fixture();
+  try {
+    f.client.filesById.set("F1", {
+      id: "F1",
+      name: "notes.txt",
+      mimetype: "text/plain",
+      size: 4,
+      url_private_download: "https://files.slack.com/files-pri/F1/notes.txt",
+    });
+    await f.app.emitMessage({
+      channel: "D1",
+      channel_type: "im",
+      user: "U1",
+      text: "please review",
+      ts: "100.15",
+      attachments: [
+        {
+          is_msg_unfurl: true,
+          author_id: "U2",
+          author_name: "Bob",
+          channel_name: "project-notes",
+          text: "outer message",
+          files: [
+            {
+              id: "F1",
+              name: "notes.txt",
+              is_hidden_by_limit: 1,
+            },
+          ],
+          message_blocks: [
+            {
+              message: {
+                attachments: [
+                  {
+                    is_msg_unfurl: true,
+                    author_name: "Carol",
+                    channel_name: "research",
+                    text: "nested message",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    assert.deepEqual(f.client.fileInfoCalls, ["F1"]);
+    assert.equal(fetchMock.mock.callCount(), 1);
+    assert.equal(f.core.turns.length, 1);
+    assert.equal(
+      f.core.turns[0].text,
+      "please review\n[forwarded message from Bob in #project-notes] outer message\n" +
+        "[forwarded message from Carol in #research] nested message",
+    );
+    assert.deepEqual(f.core.turns[0].attachments, [
+      {
+        name: "notes.txt",
+        mimetype: "text/plain",
+        sizeBytes: 4,
+        blobId: "blob-1",
+        sourceId: "F1",
+        author: "Bob",
+      },
+    ]);
   } finally {
     await f.stop();
   }
