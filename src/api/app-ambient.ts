@@ -1,4 +1,4 @@
-import type { TurnRequest } from "../types.ts";
+import type { ActorAssertion, TurnRequest } from "../types.ts";
 import { orgId as orgIdOf } from "../config.ts";
 import type { OrchestratorInput } from "../core/orchestrator.ts";
 import { samePerson } from "../directory/person.ts";
@@ -207,17 +207,43 @@ export function createAmbientHelpers(deps: AppDeps, app: App) {
   function workerConversation(
     batch: AmbientBatch,
     threadRef: string,
-  ): { kind: "channel" | "group"; threadRef: string; channelRef: string; isMpim?: boolean } {
+    audience: ActorAssertion[],
+  ): TurnRequest["conversation"] {
+    const roster: Pick<TurnRequest["conversation"], "audience" | "publishMembers"> = audience.length
+      ? { audience, publishMembers: audience }
+      : { audience };
     return batch.kind === "group"
-      ? { kind: "group", threadRef, channelRef: batch.container, isMpim: true }
-      : { kind: "channel", threadRef, channelRef: batch.container };
+      ? { kind: "group" as const, threadRef, channelRef: batch.container, isMpim: true, ...roster }
+      : { kind: "channel" as const, threadRef, channelRef: batch.container, ...roster };
+  }
+
+  async function conversationAudience(batch: AmbientBatch): Promise<ActorAssertion[] | undefined> {
+    const members = await deps.directory
+      .conversationMembers(batch.kind === "group" ? "group" : "channel", batch.container)
+      .catch(() => undefined);
+    if (!members?.length) return undefined;
+    return members.map((member) => ({
+      externalId: member.principalId,
+      ...(member.displayName ? { displayName: member.displayName } : {}),
+    }));
   }
 
   async function spawnAmbientWorker(batch: AmbientBatch, decision: AmbientDecision): Promise<void> {
     const latestTs = batch.messages.reduce((max, m) => (m.ts > max ? m.ts : max), "");
     const threadRef = `${batch.surface}:${batch.container}:ambient:${latestTs}`;
-    const conversation = workerConversation(batch, threadRef);
-    const solicited = await solicitedAsker(batch, decision);
+    let solicited = await solicitedAsker(batch, decision);
+    let audience: ActorAssertion[] = [];
+    if (solicited) {
+      const askerId = solicited.member.principalId;
+      const resolved = await conversationAudience(batch);
+      if (!resolved?.some((member) => samePerson(member.externalId, askerId))) {
+        console.error(`[ambient] solicited wake has no complete roster (container=${batch.container})`);
+        solicited = undefined;
+      } else {
+        audience = resolved;
+      }
+    }
+    const conversation = workerConversation(batch, threadRef, audience);
     if (decision.askedBy && !solicited)
       console.error(
         `[ambient] solicited wake degraded to proactive (asked_by=${decision.askedBy}, container=${batch.container})`,
@@ -284,7 +310,10 @@ export function createAmbientHelpers(deps: AppDeps, app: App) {
       .screenSecuritySteer({
         payload: req.text,
         actor: { id: `system:ambient:${orgIdOf()}`, type: "internal" },
-        conversation: { ...workerConversation(batch, liveRef), audience: [] },
+        conversation:
+          batch.kind === "group"
+            ? { kind: "group", threadRef: liveRef, channelRef: batch.container, isMpim: true, audience: [] }
+            : { kind: "channel", threadRef: liveRef, channelRef: batch.container, audience: [] },
         ...(session ? { sessionId: session.id } : {}),
       })
       .catch(() => "block" as const);

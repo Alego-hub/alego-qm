@@ -70,6 +70,7 @@ export interface DirectoryStore {
   groupMember(groupId: string, principalId: string): Promise<boolean>;
   groupMembership(groupId: string, principalId: string): Promise<boolean | undefined>;
   listGroupsFor(principalId: string): Promise<string[]>;
+  conversationMembers(kind: "channel" | "group", id: string): Promise<DirectoryMember[] | undefined>;
   listChannelsFor(principalId: string): Promise<DirectoryChannel[]>;
   setWorkspaceUrl(url: string): Promise<void>;
   meta(): Promise<DirectoryMeta>;
@@ -238,6 +239,22 @@ export function createDirectoryStore(): DirectoryStore {
       const memberships = groupMembers;
       if (!memberships) return [];
       return [...memberships].filter(([, members]) => members.has(principalId)).map(([groupId]) => groupId);
+    },
+    async conversationMembers(kind, id) {
+      let ids: string[];
+      if (kind === "channel") {
+        const channel = channels.find((candidate) => candidate.channelId === id);
+        if (!channel || channel.isExternal || !knownChannelRosters?.has(id)) return undefined;
+        ids = [...(channelMembers?.get(id) ?? [])];
+      } else {
+        if (!knownGroupRosters?.has(id)) return undefined;
+        ids = [...(groupMembers?.get(id) ?? [])];
+      }
+      if (!ids.length) return undefined;
+      const roster = ids
+        .map((principalId) => members.find((member) => samePerson(member.principalId, principalId)))
+        .filter((member): member is DirectoryMember => member !== undefined);
+      return roster.length === ids.length ? roster : undefined;
     },
     async listChannelsFor(principalId) {
       return channels.filter(
