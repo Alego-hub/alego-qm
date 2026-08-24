@@ -90,6 +90,7 @@ import {
   rehydrateFoldImages,
   tapeEventsEntitled,
   tapeNeedsInterruptHeal,
+  tapeRowsMatchReplayHarness,
 } from "../harness/tape-fold.ts";
 import { searchSessionEntries } from "../sessions/history-search.ts";
 import { defaultPublishAudience } from "../resolution/publish-audience.ts";
@@ -2155,13 +2156,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
               scopeId,
               resolution.orgScopeId,
             );
-            const sameHarness = rows.every(
-              (row) => row.kind !== "message" || row.harness === undefined || row.harness === "pi",
-            );
+            const replayHarness = input.harness ?? deps.harness.profile.id;
+            let sameHarness = tapeRowsMatchReplayHarness(rows, replayHarness);
             if (
-              (!covered || lastImportLacksScopes(rows)) &&
+              (!covered || lastImportLacksScopes(rows) || !sameHarness) &&
               deps.sessionTapeMode === "serve" &&
-              sameHarness &&
               participantHistorySeqs === undefined
             ) {
               const importEvent = coverageImportEvent(rawEntries);
@@ -2177,6 +2176,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
                 );
                 rows = [...rows, imported];
                 covered = true;
+                sameHarness = tapeRowsMatchReplayHarness(rows, replayHarness);
               }
             }
             const eventsEntitled = tapeEventsEntitled(rows, conversation.audience, scopeId, resolution.orgScopeId);
@@ -2588,9 +2588,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
                   .getTape(session.id)
                   .then(async (allRows) => {
                     const rows = filterTapeForAudience(allRows, conversation.audience, scopeId, resolution.orgScopeId);
-                    const sameHarness = rows.every(
-                      (row) => row.kind !== "message" || row.harness === undefined || row.harness === "pi",
-                    );
+                    const sameHarness = tapeRowsMatchReplayHarness(rows, input.harness ?? deps.harness.profile.id);
                     const eventsEntitled = tapeEventsEntitled(
                       rows,
                       conversation.audience,

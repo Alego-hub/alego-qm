@@ -358,7 +358,7 @@ async function directAnthropicJson(
   return json.content?.[0]?.text;
 }
 
-const APPROVAL_SUMMARY_PROMPT = [
+export const APPROVAL_SUMMARY_PROMPT = [
   "A command hit a human-approval gate. Explain, in ONE plain-English sentence, what running THIS",
   "specific command would actually do — concrete enough that a non-expert can decide whether to allow it.",
   "Name the real targets (files, branches, tables, URLs) the command acts on; don't restate the policy",

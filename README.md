@@ -1,12 +1,53 @@
-# qm
+# Alego QM
 
-A multiplayer agent harness for work. In Slack and on the web.
+QM's multiplayer workspace, Slack, policy, memory, and background-work runtime, powered by Alego agents.
 
 ![The QM web UI: two concurrent sessions, a sidebar of personal files, crons, keychain, deploys, memory, and skills](./docs/screenshots/web-ui-hero.png)
 
 ## Setup
 
-Tell your coding agent of choice `Let's deploy https://github.com/yc-software/qm`. From here, it should follow the deployment guide in this repo.
+Install the bundle into an Alego profile, then start that profile:
+
+```bash
+alego plugin --profile qm add 'github:Alego-hub/alego-qm#path:alego-plugin'
+alego --profile qm
+```
+
+The plugin starts QM on `http://127.0.0.1:8080`, stores local files under the Alego home,
+and routes every QM turn through an ephemeral Alego Agent reconstructed from QM's transcript store.
+Pin the GitHub dependency to a reviewed commit for a reproducible installation.
+
+The bundle row can be replaced in the profile's `cordis.patch.yml` to choose another Alego
+provider or model and to pass QM deployment settings:
+
+```yaml
+- id: alego-qm
+  config:
+    provider: deepseek-official
+    model: deepseek-v4-flash
+    host: 127.0.0.1
+    port: 8080
+    dataDir: /absolute/path/to/qm-data
+    env:
+      DATABASE_URL: postgresql://localhost/qm
+      SESSION_STORE: postgres
+      RUN_STORE: postgres
+      CONNECTOR_SECRET_KEY: replace-with-a-distinct-secret
+```
+
+Configuration also supports `maxTokens`, `orgId`, `backgroundWork`,
+`allowUnauthenticatedCore`, and `coreSigningSecret`. The `env` map accepts the existing QM
+settings documented in [`.env.example`](./.env.example). Unsigned HTTP ingress is allowed by
+default only on a loopback host; exposing QM on another interface requires a signing secret.
+Without the Postgres settings shown above, sessions and background-work state are development-only
+in-memory stores and do not survive a profile restart.
+
+Contributors with an Alego source checkout can verify the packed bundle through Alego's real
+CLI, Loader, profile, and process lifecycle:
+
+```bash
+ALEGO_SOURCE_DIR=/path/to/alego npm run test:alego-source
+```
 
 ## What is QM?
 
@@ -18,9 +59,9 @@ they can also collaborate with the agent in channels, group messages, and projec
 Each person and each room has its own scoped memory, files, keychain view, permissions,
 crons, web apps, and durable sandbox.
 
-It's built with open source in mind. Pick your own harness and model and switch between
-them — Pi, OpenCode, Codex, and Claude Code all drive the same core, so a deployment
-isn't tied to any single vendor.
+It's built with open source in mind. Alego owns model routing and the agent loop while QM
+provides the durable, multiplayer application around it, so model and provider selection stay
+in the Alego composition instead of being tied to one vendor.
 
 ## Features
 
@@ -54,7 +95,7 @@ flowchart LR
 
   subgraph CORE["Headless core"]
     API["API · identity · policy · scheduler"]
-    LOOP["Agent loop<br/>(Pi, OpenCode, Claude Code)"]
+    LOOP["Agent loop<br/>(Alego Agent · Session · Tools)"]
     API <--> LOOP
   end
 
@@ -64,8 +105,8 @@ flowchart LR
   LOOP <--> SBX
 ```
 
-Every turn runs through a central core, which can use a variety of models and harnesses
-to generate the response. A Postgres persistence layer holds user data, session history,
+Every turn in this bundle runs through an Alego Agent, while QM's adapter preserves the
+core's harness boundary. A Postgres persistence layer holds user data, session history,
 and other durable state. The agent has a small, fixed tool surface; one of those tools is
 `execute`, which runs commands in the scope's own isolated sandbox — its durable computer,
 where installed tools stay installed. The web UI, the admin panel, and the public portal

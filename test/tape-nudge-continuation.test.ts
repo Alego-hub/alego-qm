@@ -79,7 +79,7 @@ async function runScenario(
         const userEntry = await turn.emit({ type: "user", payload: { text: turn.input }, scopeLabel: turn.scopeLabel });
         await turn.tape?.({
           kind: "message",
-          harness: "pi",
+          harness: turn.harness ?? "pi",
           payload: { role: "user", content: [{ type: "text", text }], timestamp: Date.now() },
           scopeLabel: turn.scopeLabel,
           entrySeq: userEntry.seq,
@@ -88,7 +88,7 @@ async function runScenario(
         if (turn.input.startsWith("[system] You were addressed")) {
           await turn.tape?.({
             kind: "message",
-            harness: "pi",
+            harness: turn.harness ?? "pi",
             payload: {
               role: "assistant",
               content: [{ type: "toolCall", id: "post-1", name: "slack", arguments: { action: "post" } }],
@@ -103,7 +103,7 @@ async function runScenario(
           const posted = await turn.tools.post("nudged from tape");
           await turn.tape?.({
             kind: "message",
-            harness: "pi",
+            harness: turn.harness ?? "pi",
             payload: {
               role: "toolResult",
               toolCallId: "post-1",
@@ -119,7 +119,7 @@ async function runScenario(
           });
           await turn.tape?.({
             kind: "message",
-            harness: "pi",
+            harness: turn.harness ?? "pi",
             payload: { role: "assistant", content: [{ type: "text", text: "posted" }] },
             scopeLabel: turn.scopeLabel,
           });
@@ -144,7 +144,7 @@ async function runScenario(
           if (!options.failPrimaryTapeMessage) {
             await turn.tape?.({
               kind: "message",
-              harness: "pi",
+              harness: turn.harness ?? "pi",
               payload: {
                 role: "assistant",
                 content: [{ type: "text", text: reply }],
@@ -164,7 +164,7 @@ async function runScenario(
         if (!failTapeMessage) {
           await turn.tape?.({
             kind: "message",
-            harness: "pi",
+            harness: turn.harness ?? "pi",
             payload: { role: "assistant", content: [{ type: "text", text: reply }] },
             scopeLabel: turn.scopeLabel,
           });
@@ -276,6 +276,24 @@ test("an exact first sub-turn continues its reply-or-decline nudge from the refr
     true,
   );
   assert.equal(await sessions.tapeCoverage(session.id), entries.at(-1)!.seq);
+});
+
+test("switching a served Pi session to Alego transfers tape ownership in the same turn", async () => {
+  const { modes, folds, sessions, session, orchestrator, input } = await runScenario();
+  await orchestrator.handleTurn(input("after harness switch", { harness: "alego" }));
+  assert.equal(modes.at(-1), "serve");
+  assert.ok(JSON.stringify(folds.at(-1)).includes("needs nudge"));
+  const rows = await sessions.getTape(session.id);
+  const importIndex = rows.findLastIndex(
+    (row) => row.kind === "context_event" && (row.payload as { event?: unknown } | null)?.event === "legacy_import",
+  );
+  assert.ok(importIndex >= 0);
+  assert.equal(
+    rows
+      .slice(importIndex)
+      .some((row) => row.kind === "message" && row.harness !== undefined && row.harness !== "alego"),
+    false,
+  );
 });
 
 test("a missing primary checkpoint forces the nudge back to reconstruction; complete writes still watermark", async () => {

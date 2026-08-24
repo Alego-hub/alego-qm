@@ -1,0 +1,5 @@
+- insert:
+    - id: alego-qm
+      name: alego-qm
+      config:
+        dataDir: !!js alegoHomePath('qm')

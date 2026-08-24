@@ -263,12 +263,27 @@ export function planTapeSeed(
   mode: "shadow" | "serve" | undefined,
   folded?: readonly unknown[],
 ): { seed: unknown[] | null; skip?: "foreign-harness"; lint?: FoldLint; fold?: unknown[] } {
-  if (rows.some((r) => r.kind === "message" && r.harness !== undefined && r.harness !== harness)) {
+  if (
+    replayOwnedRows(rows).some((row) => row.kind === "message" && row.harness !== undefined && row.harness !== harness)
+  ) {
     return { seed: null, skip: "foreign-harness" };
   }
   const fold = folded ? [...folded] : foldTape(rows);
   const lint = lintFold(fold);
   return { seed: mode === "serve" && lint.ok && fold.length ? fold : null, lint, fold };
+}
+
+function replayOwnedRows(rows: readonly TapeRecord[]): readonly TapeRecord[] {
+  const lastImport = rows.findLastIndex(
+    (row) => row.kind === "context_event" && (row.payload as { event?: unknown } | null)?.event === "legacy_import",
+  );
+  return lastImport < 0 ? rows : rows.slice(lastImport);
+}
+
+export function tapeRowsMatchReplayHarness(rows: readonly TapeRecord[], harness: string): boolean {
+  return replayOwnedRows(rows).every(
+    (row) => row.kind !== "message" || row.harness === undefined || row.harness === harness,
+  );
 }
 
 export function tapeNeedsInterruptHeal(rows: readonly TapeRecord[], folded?: readonly unknown[]): boolean {

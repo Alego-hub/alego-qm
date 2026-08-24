@@ -4,6 +4,7 @@ import type { Skill, SkillResolution } from "../../skills/skill-store.ts";
 import { ByteSourceTooLargeError } from "../../files/durable-byte-store.ts";
 import {
   defaultModelForHarness,
+  HARNESS_IDS,
   isHarnessId,
   modelProviderAvailabilityFor,
   modelSupportedByHarness,
@@ -15,6 +16,7 @@ import {
   type HarnessId,
 } from "../../model/pi-models.ts";
 import { builtInModelCatalog, selectableCatalogForHarness, selectableModelCatalog } from "../../model/model-catalog.ts";
+import { modelAvailableForHarness } from "../../harness/harness-router.ts";
 import { errMessage } from "../../util/errors.ts";
 import { renderAgentApis } from "../agent-api-catalog.ts";
 import { mintCapabilityToken, CAPABILITY_TTL_MS } from "../../auth/capability-token.ts";
@@ -1065,9 +1067,14 @@ async function getSurfaceConfig(ctx: ApiCtx): Promise<void> {
   const catalog = managedKeys?.openrouter
     ? await selectableModelCatalog(deps.modelCredentialFetch)
     : builtInModelCatalog();
-  const allowed = selectableCatalogForHarness(catalog, harnessId).map((model) => model.id);
-  const configuredPicker = webuiModels?.filter((id) => modelSupportedByHarness(id, harnessId)) ?? [];
-  const resolvedBase = modelSupportedByHarness(baseModel ?? undefined, harnessId)
+  const constrained = isHarnessId(harnessId) ? deps.harnessModelIds?.[harnessId] : undefined;
+  const allowed = constrained ?? selectableCatalogForHarness(catalog, harnessId).map((model) => model.id);
+  const supportsModel = (id: string | undefined): boolean =>
+    isHarnessId(harnessId)
+      ? modelAvailableForHarness(id, harnessId, deps.harnessModelIds)
+      : modelSupportedByHarness(id, harnessId);
+  const configuredPicker = webuiModels?.filter((id) => supportsModel(id)) ?? [];
+  const resolvedBase = supportsModel(baseModel ?? undefined)
     ? baseModel!
     : defaultModelForHarness(harnessId, deps.baseModelDefault);
   const resolvedBranding = {
@@ -1112,10 +1119,15 @@ async function runtimeConfigBody(ctx: ApiCtx, scope: ScopeId): Promise<Record<st
   const config = ctx.deps.config!;
   const fallback = runtimeFallback(ctx);
   const org = orgScope(ctx.deps);
-  const approvedHarnesses = ((await config.getApprovedHarnessesDurable()) ?? [fallback.harnessId]).filter(isHarnessId);
+  const availableHarnesses = new Set(ctx.deps.harnessIds ?? HARNESS_IDS);
+  const supportsModel = (modelId: string | undefined, harnessId: HarnessId): boolean =>
+    modelAvailableForHarness(modelId, harnessId, ctx.deps.harnessModelIds);
+  const approvedHarnesses = ((await config.getApprovedHarnessesDurable()) ?? [fallback.harnessId]).filter(
+    (id): id is HarnessId => isHarnessId(id) && availableHarnesses.has(id),
+  );
   const firstApproved = approvedHarnesses[0] ?? fallback.harnessId;
   const safeFallback =
-    approvedHarnesses.includes(fallback.harnessId) && modelSupportedByHarness(fallback.modelId, fallback.harnessId)
+    approvedHarnesses.includes(fallback.harnessId) && supportsModel(fallback.modelId, fallback.harnessId)
       ? fallback
       : { harnessId: firstApproved, modelId: defaultModelForHarness(firstApproved, fallback.modelId) };
   const configuredKeys = ctx.deps.providerKeys ?? ALL_PROVIDERS_AVAILABLE;
@@ -1138,7 +1150,7 @@ async function runtimeConfigBody(ctx: ApiCtx, scope: ScopeId): Promise<Record<st
     orgStored &&
     isHarnessId(orgStored.harnessId) &&
     approvedHarnesses.includes(orgStored.harnessId) &&
-    modelSupportedByHarness(orgStored.modelId, orgStored.harnessId)
+    supportsModel(orgStored.modelId, orgStored.harnessId)
   ) {
     orgDefault = {
       harnessId: orgStored.harnessId,
@@ -1150,7 +1162,7 @@ async function runtimeConfigBody(ctx: ApiCtx, scope: ScopeId): Promise<Record<st
   } else if (
     orgLegacyModel &&
     approvedHarnesses.includes(fallback.harnessId) &&
-    modelSupportedByHarness(orgLegacyModel, fallback.harnessId)
+    supportsModel(orgLegacyModel, fallback.harnessId)
   ) {
     orgDefault = { harnessId: fallback.harnessId, modelId: orgLegacyModel, revision: 0 };
   }
@@ -1167,7 +1179,7 @@ async function runtimeConfigBody(ctx: ApiCtx, scope: ScopeId): Promise<Record<st
     stored &&
     isHarnessId(stored.harnessId) &&
     approvedHarnesses.includes(stored.harnessId) &&
-    modelSupportedByHarness(stored.modelId, stored.harnessId)
+    supportsModel(stored.modelId, stored.harnessId)
   ) {
     scopeOverride = {
       harnessId: stored.harnessId,
@@ -1179,7 +1191,7 @@ async function runtimeConfigBody(ctx: ApiCtx, scope: ScopeId): Promise<Record<st
   } else if (
     legacyModel &&
     approvedHarnesses.includes(fallback.harnessId) &&
-    modelSupportedByHarness(legacyModel, fallback.harnessId)
+    supportsModel(legacyModel, fallback.harnessId)
   ) {
     scopeOverride = { harnessId: fallback.harnessId, modelId: legacyModel, orgRevision: 0 };
   }
@@ -1188,18 +1200,16 @@ async function runtimeConfigBody(ctx: ApiCtx, scope: ScopeId): Promise<Record<st
   const allowlist = await config.getWebuiModelsDurable(org);
   const modelsByHarness = Object.fromEntries(
     approvedHarnesses.map((harnessId) => {
-      const ids = allowlist?.length
-        ? allowlist.filter((id) => modelSupportedByHarness(id, harnessId))
-        : selectableCatalogForHarness(catalog, harnessId).map((model) => model.id);
+      const constrained = ctx.deps.harnessModelIds?.[harnessId];
+      let ids: string[];
+      if (constrained) ids = [...constrained];
+      else if (allowlist?.length) ids = allowlist.filter((id) => supportsModel(id, harnessId));
+      else ids = selectableCatalogForHarness(catalog, harnessId).map((model) => model.id);
       for (const choice of selected) {
-        if (
-          choice.harnessId === harnessId &&
-          modelSupportedByHarness(choice.modelId, harnessId) &&
-          !ids.includes(choice.modelId)
-        )
+        if (choice.harnessId === harnessId && supportsModel(choice.modelId, harnessId) && !ids.includes(choice.modelId))
           ids.push(choice.modelId);
       }
-      return [harnessId, serviceableModelIds(ids, providersFor(harnessId))];
+      return [harnessId, constrained ? ids : serviceableModelIds(ids, providersFor(harnessId))];
     }),
   );
   const advertisedModelIds = new Set(Object.values(modelsByHarness).flat());
@@ -1208,7 +1218,7 @@ async function runtimeConfigBody(ctx: ApiCtx, scope: ScopeId): Promise<Record<st
       const model = catalog.find((candidate) => candidate.id === id);
       if (model) return [[id, { name: model.name, provider: model.provider }]];
       const resolved = resolveModel(id);
-      return resolved ? [[id, { name: resolved.name, provider: resolved.provider }]] : [];
+      return [[id, { name: resolved?.name ?? id, provider: resolved?.provider ?? "alego" }]];
     }),
   );
   return {
@@ -1238,6 +1248,7 @@ async function getRuntimeConfig(ctx: ApiCtx): Promise<void> {
 }
 
 async function webuiModelEnabled(ctx: ApiCtx, modelId: string): Promise<boolean> {
+  if (Object.values(ctx.deps.harnessModelIds ?? {}).some((ids) => ids?.includes(modelId))) return true;
   const config = ctx.deps.config!;
   const picker = await config.getWebuiModelsDurable(orgScope(ctx.deps));
   if (!picker?.length || picker.includes(modelId)) return true;
@@ -1265,7 +1276,7 @@ async function putRuntimeConfig(ctx: ApiCtx): Promise<void> {
       if (
         legacyModel &&
         approved.includes(fallback.harnessId) &&
-        modelSupportedByHarness(legacyModel, fallback.harnessId) &&
+        modelAvailableForHarness(legacyModel, fallback.harnessId, ctx.deps.harnessModelIds) &&
         (await webuiModelEnabled(ctx, legacyModel))
       ) {
         await config.setRuntimeSelectionLatest(target.scope, { harnessId: fallback.harnessId, modelId: legacyModel });
@@ -1278,7 +1289,7 @@ async function putRuntimeConfig(ctx: ApiCtx): Promise<void> {
     const approved = (await config.getApprovedHarnessesDurable()) ?? [fallback.harnessId];
     if (!isHarnessId(harnessId) || !approved.includes(harnessId))
       return sendJson(ctx.res, 400, { error: "harness_not_approved" });
-    if (typeof modelId !== "string" || !modelSupportedByHarness(modelId, harnessId))
+    if (typeof modelId !== "string" || !modelAvailableForHarness(modelId, harnessId, ctx.deps.harnessModelIds))
       return sendJson(ctx.res, 400, { error: "model_not_supported" });
     if (!(await webuiModelEnabled(ctx, modelId))) return sendJson(ctx.res, 400, { error: "model_not_enabled" });
     const effortLevel = ctx.body.effortLevel ?? "auto";

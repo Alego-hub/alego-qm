@@ -7,8 +7,9 @@ const getModel = getBuiltinModel as unknown as (provider: string, id: string) =>
 
 export const DEFAULT_AGENT_MODEL_ID = "claude-opus-5";
 export const DEFAULT_CODEX_MODEL_ID = "gpt-5.6-sol";
+const DEFAULT_ALEGO_MODEL_ID = "deepseek-v4-flash";
 export const THINKING_LEVELS = ["auto", "low", "medium", "high", "xhigh", "max", "ultracode"] as const;
-export const HARNESS_IDS = ["pi", "opencode", "codex", "claude", "mock"] as const;
+export const HARNESS_IDS = ["pi", "opencode", "codex", "claude", "alego", "mock"] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
 export const MODEL_PROVIDERS = ["anthropic", "openai", "openrouter"] as const;
@@ -207,6 +208,7 @@ export function contextTokenBudgetForModel(id: string): number | undefined {
 
 export function modelSupportedByHarness(id: string | undefined, harness: string): boolean {
   if (!id) return false;
+  if (harness === "alego") return true;
   if (isCustomModelId(id) && !REGISTRY_BY_ID.has(id))
     return harness === "pi" || harness === "opencode" || harness === "mock";
   if (harness === "pi" || harness === "opencode" || harness === "mock") return Boolean(resolveModel(id));
@@ -222,7 +224,9 @@ export function defaultModelForHarness(
   providers?: ModelProviderAvailability,
 ): string {
   if (configured && modelSupportedByHarness(configured, harness)) return configured;
-  const preferred = harness === "codex" ? DEFAULT_CODEX_MODEL_ID : DEFAULT_AGENT_MODEL_ID;
+  let preferred = DEFAULT_AGENT_MODEL_ID;
+  if (harness === "codex") preferred = DEFAULT_CODEX_MODEL_ID;
+  else if (harness === "alego") preferred = DEFAULT_ALEGO_MODEL_ID;
   if (!providers || modelServiceable(preferred, providers)) return preferred;
   const servable = SELECTABLE_BASE_MODELS.find(
     (model) => modelSupportedByHarness(model.id, harness) && modelServiceable(model.id, providers),
@@ -260,6 +264,7 @@ export function modelProviderAvailabilityFor(
   if (harness === "pi") return managedKeys;
   if (harness === "opencode") return { ...configKeys, openrouter: false };
   if (harness === "codex") return configKeys;
+  if (harness === "alego") return ALL_PROVIDERS_AVAILABLE;
   return ALL_PROVIDERS_AVAILABLE;
 }
 
@@ -268,6 +273,7 @@ export function onlyProvider(provider: ModelProvider): ModelProviderAvailability
 }
 
 export function defaultModelForProvider(harness: string, provider: ModelProvider): string | undefined {
+  if (harness === "alego") return undefined;
   const only = onlyProvider(provider);
   if (!modelProviderAvailabilityFor(harness, only)[provider]) return undefined;
   const model = defaultModelForHarness(harness, undefined, only);

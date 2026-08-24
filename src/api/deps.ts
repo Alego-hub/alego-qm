@@ -1,4 +1,5 @@
-import type { ModelProviderAvailability } from "../model/pi-models.ts";
+import type { HarnessId, ModelProviderAvailability } from "../model/pi-models.ts";
+import type { HarnessModelIds } from "../harness/harness-router.ts";
 import type { ModelCredentialStore } from "../model/model-credential-store.ts";
 import type { CustomProviderStore } from "../model/custom-provider-store.ts";
 import type { McpServerStore } from "../mcp/mcp-server-store.ts";
@@ -94,6 +95,8 @@ export interface ServerDeps {
   refreshCustomProviders?: () => Promise<void>;
   brandingDefault?: OrgBranding;
   harnessId?: string;
+  harnessIds?: readonly HarnessId[];
+  harnessModelIds?: HarnessModelIds;
   admin?: AdminService;
   rateLimiter?: RateLimiter;
   sessions?: SessionStore;

@@ -31,6 +31,27 @@ test("web model controls are bounded by admin configuration", () => {
   assert.equal(validateWebTurnModelOptions({ model: "claude-opus-4-8", thinkingLevel: "high" }, null), null);
 });
 
+test("a harness-owned model bypasses the QM provider registry only when explicitly enabled", () => {
+  assert.equal(
+    validateWebTurnModelOptions(
+      { model: "deepseek-v4-flash" },
+      ["deepseek-v4-flash"],
+      { anthropic: false, openai: false, openrouter: false },
+      ["deepseek-v4-flash"],
+    ),
+    null,
+  );
+  assert.equal(
+    validateWebTurnModelOptions(
+      { model: "unconfigured" },
+      ["deepseek-v4-flash"],
+      { anthropic: false, openai: false, openrouter: false },
+      ["deepseek-v4-flash"],
+    ),
+    "that model is not enabled for the web UI",
+  );
+});
+
 test("a resolved scope override outside the configured picker is refused, the org default is not", () => {
   const picker = ["claude-sonnet-4-6"];
   assert.equal(
