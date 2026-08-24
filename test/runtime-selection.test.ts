@@ -60,6 +60,34 @@ test("runtime resolution falls back to the first approved harness when deploymen
   });
 });
 
+test("runtime resolution excludes harnesses that are not installed", () => {
+  const config = createMemoryConfigStore("default-org");
+  config.setApprovedHarnesses(["pi", "alego"]);
+  config.setRuntimeSelection(ORG, { harnessId: "pi", modelId: "claude-opus-4-8" });
+  const fallback = { harnessId: "alego" as const, modelId: "deepseek-v4-flash" };
+
+  assert.deepEqual(resolveRuntimeChoice(config, ORG, PERSONAL, fallback, undefined, ["alego"]), fallback);
+  assert.throws(
+    () =>
+      resolveRuntimeChoice(config, ORG, PERSONAL, fallback, { harnessId: "pi", modelId: "claude-opus-4-8" }, ["alego"]),
+    /not approved/,
+  );
+});
+
+test("runtime resolution enforces a harness-owned model list", () => {
+  const config = createMemoryConfigStore("default-org");
+  config.setApprovedHarnesses(["alego"]);
+  config.setRuntimeSelection(ORG, { harnessId: "alego", modelId: "claude-opus-4-8" });
+  const fallback = { harnessId: "alego" as const, modelId: "deepseek-v4-flash" };
+  const constrained = { alego: ["deepseek-v4-flash"] } as const;
+
+  assert.deepEqual(resolveRuntimeChoice(config, ORG, PERSONAL, fallback, undefined, ["alego"], constrained), fallback);
+  assert.throws(
+    () => resolveRuntimeChoice(config, ORG, PERSONAL, fallback, { modelId: "claude-opus-4-8" }, ["alego"], constrained),
+    /not approved/,
+  );
+});
+
 test("runtime resolution reads approvals and selections from shared durable state on every turn", async () => {
   const baseModels = createMemoryMap<PersistedBaseModel>();
   const approvedHarnesses = createMemoryMap<PersistedApprovedHarnesses>();

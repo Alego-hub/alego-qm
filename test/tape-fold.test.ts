@@ -7,6 +7,7 @@ import {
   planTapeSeed,
   rehydrateFoldImages,
   tapeNeedsInterruptHeal,
+  tapeRowsMatchReplayHarness,
 } from "../src/harness/tape-fold.ts";
 import { INTERRUPTED_TOOL_RESULT } from "../src/harness/context-compaction.ts";
 import type { TapeRecord } from "../src/sessions/session-store.ts";
@@ -305,6 +306,52 @@ test("planTapeSeed serves a clean fold only in serve mode, falls back on defects
   const skipped = planTapeSeed(foreign, "pi", "serve");
   assert.equal(skipped.seed, null);
   assert.equal(skipped.skip, "foreign-harness");
+});
+
+test("Pi and Alego tapes each use the shared replay grammar without mixing harnesses", () => {
+  seq = 0;
+  const pi = user("pi", { harness: "pi" });
+  const alego = user("alego", { harness: "alego" });
+  assert.equal(tapeRowsMatchReplayHarness([pi], "pi"), true);
+  assert.equal(tapeRowsMatchReplayHarness([alego], "alego"), true);
+  assert.equal(tapeRowsMatchReplayHarness([pi], "alego"), false);
+  assert.equal(tapeRowsMatchReplayHarness([pi, alego], "alego"), false);
+  assert.equal(tapeRowsMatchReplayHarness([user("other", { harness: "opencode" })], "alego"), false);
+});
+
+test("a legacy import transfers replay ownership from Pi to Alego", () => {
+  seq = 0;
+  const rows = [
+    user("old Pi message", { harness: "pi" }),
+    row({
+      kind: "context_event",
+      payload: {
+        event: "legacy_import",
+        messages: [
+          { role: "user", content: [{ type: "text", text: "question" }], timestamp: 1 },
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "answer" }],
+            timestamp: 2,
+            stopReason: "stop",
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            },
+          },
+        ],
+        scopes: [scope],
+      },
+    }),
+  ];
+  assert.equal(tapeRowsMatchReplayHarness(rows, "alego"), true);
+  const planned = planTapeSeed(rows, "alego", "serve");
+  assert.equal(planned.skip, undefined);
+  assert.ok(planned.seed?.length);
 });
 
 test("interrupt heal converts a heal-able tape into a servable one", () => {

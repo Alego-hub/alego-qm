@@ -48,9 +48,14 @@ export function validateWebTurnModelOptions(
   input: { model?: string; thinkingLevel?: string },
   enabledModels: readonly string[] | null,
   providers: ModelProviderAvailability = ALL_PROVIDERS_AVAILABLE,
+  serviceableOverrides: readonly string[] = [],
 ): string | null {
   const enabled = enabledModels?.length ? enabledModels : DEFAULT_WEBUI_MODEL_IDS;
-  const allowedModels = serviceableModelIds(enabled, providers);
+  const overrides = new Set(serviceableOverrides);
+  const allowedModels = [
+    ...serviceableModelIds(enabled, providers),
+    ...enabled.filter((modelId) => overrides.has(modelId)),
+  ];
   if (input.model && !allowedModels.includes(input.model)) {
     return resolveModel(input.model) && !modelServiceable(input.model, providers)
       ? "that model isn't available on this deployment (its provider isn't configured)"

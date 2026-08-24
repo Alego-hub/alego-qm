@@ -1,5 +1,11 @@
 import type { ScopedConfigStore } from "../resolution/config-store.ts";
-import { defaultModelForHarness, isHarnessId, modelSupportedByHarness, type HarnessId } from "../model/pi-models.ts";
+import {
+  defaultModelForHarness,
+  HARNESS_IDS,
+  isHarnessId,
+  modelSupportedByHarness,
+  type HarnessId,
+} from "../model/pi-models.ts";
 import type { ScopeId } from "../types.ts";
 import type { Harness, HarnessTurnInput } from "./harness.ts";
 import { NonRetryableTurnError } from "../core/turn-error.ts";
@@ -9,14 +15,34 @@ export interface RuntimeChoice {
   modelId: string;
 }
 
+export type HarnessModelIds = Readonly<Partial<Record<HarnessId, readonly string[]>>>;
+
+export function modelAvailableForHarness(
+  id: string | undefined,
+  harness: HarnessId,
+  constrained: HarnessModelIds = {},
+): boolean {
+  const ids = constrained[harness];
+  return ids ? Boolean(id && ids.includes(id)) : modelSupportedByHarness(id, harness);
+}
+
 export function resolveRuntimeChoice(
   config: Pick<ScopedConfigStore, "getApprovedHarnesses" | "getRuntimeSelection" | "getBaseModel">,
   orgScopeId: ScopeId,
   scope: ScopeId,
   fallback: RuntimeChoice,
   requested?: Partial<RuntimeChoice>,
+  available: readonly HarnessId[] = HARNESS_IDS,
+  constrainedModels: HarnessModelIds = {},
 ): RuntimeChoice {
-  const approved = config.getApprovedHarnesses() ?? [fallback.harnessId];
+  const availableSet = new Set(available);
+  const availableFallback = availableSet.has(fallback.harnessId)
+    ? fallback.harnessId
+    : (available[0] ?? fallback.harnessId);
+  const approved = (config.getApprovedHarnesses() ?? [availableFallback]).filter(
+    (id): id is HarnessId => isHarnessId(id) && availableSet.has(id),
+  );
+  if (!approved.length) approved.push(availableFallback);
   const orgStored = config.getRuntimeSelection(orgScopeId);
   const orgLegacy = config.getBaseModel(orgScopeId);
   const configuredOrg =
@@ -25,12 +51,13 @@ export function resolveRuntimeChoice(
       : { harnessId: fallback.harnessId, modelId: orgLegacy ?? fallback.modelId };
   const firstApproved = approved.find(isHarnessId) ?? fallback.harnessId;
   const safeFallback =
-    approved.includes(fallback.harnessId) && modelSupportedByHarness(fallback.modelId, fallback.harnessId)
+    approved.includes(fallback.harnessId) &&
+    modelAvailableForHarness(fallback.modelId, fallback.harnessId, constrainedModels)
       ? fallback
       : { harnessId: firstApproved, modelId: defaultModelForHarness(firstApproved, fallback.modelId) };
   const org =
     approved.includes(configuredOrg.harnessId) &&
-    modelSupportedByHarness(configuredOrg.modelId, configuredOrg.harnessId)
+    modelAvailableForHarness(configuredOrg.modelId, configuredOrg.harnessId, constrainedModels)
       ? configuredOrg
       : safeFallback;
   const scopedStored = scope === orgScopeId ? null : config.getRuntimeSelection(scope);
@@ -45,7 +72,10 @@ export function resolveRuntimeChoice(
     requested?.harnessId || requested?.modelId
       ? { harnessId: requested.harnessId ?? inherited.harnessId, modelId: requested.modelId ?? inherited.modelId }
       : inherited;
-  if (!approved.includes(choice.harnessId) || !modelSupportedByHarness(choice.modelId, choice.harnessId)) {
+  if (
+    !approved.includes(choice.harnessId) ||
+    !modelAvailableForHarness(choice.modelId, choice.harnessId, constrainedModels)
+  ) {
     if (requested?.harnessId || requested?.modelId)
       throw new NonRetryableTurnError(`runtime ${choice.harnessId}/${choice.modelId} is not approved`);
     return org;
@@ -59,6 +89,8 @@ export async function resolveRuntimeChoiceDurable(
   scope: ScopeId,
   fallback: RuntimeChoice,
   requested?: Partial<RuntimeChoice>,
+  available: readonly HarnessId[] = HARNESS_IDS,
+  constrainedModels: HarnessModelIds = {},
 ): Promise<RuntimeChoice> {
   const approved = (await config.getApprovedHarnessesDurable()) ?? [fallback.harnessId];
   const [orgStored, scopedStored, orgLegacy, scopedLegacy] = await Promise.all([
@@ -78,7 +110,7 @@ export async function resolveRuntimeChoiceDurable(
       return id === scope ? scopedLegacy : null;
     },
   };
-  return resolveRuntimeChoice(view, orgScopeId, scope, fallback, requested);
+  return resolveRuntimeChoice(view, orgScopeId, scope, fallback, requested, available, constrainedModels);
 }
 
 export function createHarnessRouter(

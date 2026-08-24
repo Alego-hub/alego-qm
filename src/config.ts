@@ -33,7 +33,7 @@ export interface Config {
   databaseUrl?: string;
   databaseCaCert?: string;
   databaseCaCertFile?: string;
-  harness: "mock" | "pi" | "opencode" | "codex" | "claude";
+  harness: "mock" | "pi" | "opencode" | "codex" | "claude" | "alego";
   securityPosture: SecurityPosture;
   sandboxBackend: "aws" | "local" | "sprites" | "smolmachines";
   sandboxSecondaryBackend?: "aws" | "local" | "sprites" | "smolmachines";
@@ -46,6 +46,7 @@ export interface Config {
   codexBinPath?: string;
   codexProcessEnv: NodeJS.ProcessEnv;
   claudeModel?: string;
+  alegoModel?: string;
   claudeBinPath?: string;
   claudeProcessEnv: NodeJS.ProcessEnv;
   detectModelId?: string;
@@ -151,10 +152,15 @@ export interface Config {
   flyDeploy: FlyDeployEnv;
 }
 
+export function hostEnvironment(): NodeJS.ProcessEnv {
+  return { ...process.env };
+}
+
 export function configuredModelForHarness(config: Config, harness: string): string | undefined {
   if (harness === "codex") return config.codexModel;
   if (harness === "claude") return config.claudeModel;
   if (harness === "opencode") return config.opencodeModel;
+  if (harness === "alego") return config.alegoModel;
   return config.modelId;
 }
 
@@ -519,10 +525,17 @@ function orgBrandingFromEnv(env: NodeJS.ProcessEnv): Config["brandingDefault"] {
 function harnessEnvStrict(value: string | undefined): Config["harness"] {
   if (value === undefined || value.trim() === "") return "mock";
   const harness = value.trim();
-  if (harness === "mock" || harness === "pi" || harness === "opencode" || harness === "codex" || harness === "claude")
+  if (
+    harness === "mock" ||
+    harness === "pi" ||
+    harness === "opencode" ||
+    harness === "codex" ||
+    harness === "claude" ||
+    harness === "alego"
+  )
     return harness;
   throw new Error(
-    `HARNESS=${JSON.stringify(value)} is not recognized — use mock, pi, opencode, codex, or claude, or unset it.`,
+    `HARNESS=${JSON.stringify(value)} is not recognized — use mock, pi, opencode, codex, claude, or alego, or unset it.`,
   );
 }
 
@@ -598,6 +611,7 @@ function modelProviderEnvStrict(env: NodeJS.ProcessEnv): ModelProvider | undefin
     );
   }
   const harness = harnessEnvStrict(env.HARNESS);
+  if (harness === "alego") return declared;
   const base = defaultModelForProvider(harness, declared);
   if (!base) {
     throw new Error(
@@ -624,7 +638,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (env.NODE_ENV === "production" && harnessEnvStrict(env.HARNESS) === "mock") {
     console.warn(
-      `[config] HARNESS is ${env.HARNESS?.trim() ? '"mock"' : "unset, which means mock"} in production — this deployment answers every message with canned text and calls no model provider. Set HARNESS=pi to run real agent turns.`,
+      `[config] HARNESS is ${env.HARNESS?.trim() ? '"mock"' : "unset, which means mock"} in production — this deployment answers every message with canned text and calls no model provider. Set HARNESS=pi or install the Alego plugin to run real agent turns.`,
     );
   }
   if (env.SANDBOX_BACKEND === "sprites" && !env.SPRITES_EGRESS_PROXY_URL) {
@@ -784,6 +798,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(env.CODEX_BIN ? { codexBinPath: env.CODEX_BIN } : {}),
     codexProcessEnv,
     ...(env.CLAUDE_MODEL ? { claudeModel: env.CLAUDE_MODEL } : {}),
+    ...(env.ALEGO_MODEL ? { alegoModel: env.ALEGO_MODEL } : {}),
     ...(env.CLAUDE_BIN ? { claudeBinPath: env.CLAUDE_BIN } : {}),
     claudeProcessEnv,
     ...(env.PI_DETECT_MODEL ? { detectModelId: env.PI_DETECT_MODEL } : {}),

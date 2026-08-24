@@ -3,8 +3,8 @@ import { encodeRef, serviceCredRef } from "../../../acl/resource-ref.ts";
 import { computeRetention } from "../../../admin/retention.ts";
 import {
   HARNESS_IDS,
-  SELECTABLE_BASE_MODELS,
   defaultModelForHarness,
+  isHarnessId,
   modelProviderAvailabilityFor,
   modelServiceable,
   ALL_PROVIDERS_AVAILABLE,
@@ -314,11 +314,19 @@ export async function getScopeConfig(ctx: ApiCtx): Promise<void> {
       ? ({ id: runtime.modelId, name: resolvedCurrent!.name, provider: currentProvider } satisfies ModelCatalogEntry)
       : null;
   const modelsFor = (harnessId: string) => {
+    const constrained = isHarnessId(harnessId) ? deps.harnessModelIds?.[harnessId] : undefined;
+    if (constrained) {
+      return constrained.map((id) => {
+        const model = resolveModel(id);
+        return { id, name: model?.name ?? id, provider: model?.provider ?? harnessId };
+      });
+    }
     const models = selectableCatalogForHarness(catalog, harnessId);
     if (currentModel && runtime?.harnessId === harnessId && !models.some((model) => model.id === currentModel.id))
       models.push(currentModel);
     return models.filter((model) => modelServiceable(model.id, providersFor(harnessId)));
   };
+  const harnessOptions = (deps.harnessIds ?? HARNESS_IDS).filter((id) => id !== "mock");
   return sendJson(res, 200, {
     scopeId: targetScope,
     ...environmentMetadata,
@@ -329,11 +337,9 @@ export async function getScopeConfig(ctx: ApiCtx): Promise<void> {
     baseModelDefault: defaultModelForHarness(deps.harnessId ?? "pi", deps.baseModelDefault),
     baseModelOptions: modelsFor(deps.harnessId ?? "pi"),
     harnessDefault: deps.harnessId ?? "pi",
-    harnessOptions: HARNESS_IDS.filter((id) => id !== "mock"),
-    modelsByHarness: Object.fromEntries(HARNESS_IDS.map((id) => [id, modelsFor(id)])),
-    browseModelOptions: SELECTABLE_BASE_MODELS.filter((m) =>
-      modelServiceable(m.id, providersFor(deps.harnessId ?? "pi")),
-    ),
+    harnessOptions,
+    modelsByHarness: Object.fromEntries(harnessOptions.map((id) => [id, modelsFor(id)])),
+    browseModelOptions: modelsFor(deps.harnessId ?? "pi"),
     egressEnforcement: {
       backend: scopeProfile?.backend ?? deps.sandboxBackend ?? "unknown",
       declaredFidelity: declaredEgress,

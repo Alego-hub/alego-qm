@@ -8,14 +8,13 @@ import {
   defaultModelForHarness,
   HARNESS_IDS,
   isHarnessId,
-  modelSupportedByHarness,
   modelServiceable,
   modelProviderAvailabilityFor,
   resolveModel,
   SELECTABLE_BASE_MODELS,
   ALL_PROVIDERS_AVAILABLE,
 } from "../../model/pi-models.ts";
-import { resolveRuntimeChoiceDurable } from "../../harness/harness-router.ts";
+import { modelAvailableForHarness, resolveRuntimeChoiceDurable } from "../../harness/harness-router.ts";
 import { sanitizeBranding } from "../../resolution/branding.ts";
 import {
   isValidCredentialSlug,
@@ -374,11 +373,18 @@ export const ADMIN_RESOURCES: readonly AdminResource[] = [
       if (raw !== undefined && raw !== null && typeof raw !== "string")
         return { error: "base-model requires { modelId: string } (empty string clears the override)" };
       const modelId = typeof raw === "string" ? raw.trim() : "";
-      if (modelId && !resolveModel(modelId)) return { error: `unknown model id: ${modelId}` };
+      if (
+        modelId &&
+        !resolveModel(modelId) &&
+        !Object.values(ctx.deps.harnessModelIds ?? {}).some((ids) => ids?.includes(modelId))
+      )
+        return { error: `unknown model id: ${modelId}` };
       const configuredKeys = ctx.deps.providerKeys ?? ALL_PROVIDERS_AVAILABLE;
       const managedKeys = ctx.deps.modelCredentials ? await ctx.deps.modelCredentials.availability() : configuredKeys;
       const unserviceable = (harness: string): { error: string } | null =>
-        modelId && !modelServiceable(modelId, modelProviderAvailabilityFor(harness, configuredKeys, managedKeys))
+        modelId &&
+        !(isHarnessId(harness) && ctx.deps.harnessModelIds?.[harness]?.includes(modelId)) &&
+        !modelServiceable(modelId, modelProviderAvailabilityFor(harness, configuredKeys, managedKeys))
           ? {
               error: `model ${modelId} isn't serviceable on this deployment: its provider key is not configured for the ${harness} harness`,
             }
@@ -386,18 +392,29 @@ export const ADMIN_RESOURCES: readonly AdminResource[] = [
       const runtime = await ctx.deps.config!.getRuntimeSelectionDurable(scope);
       if (!modelId) await ctx.deps.config!.setRuntimeSelectionLatest(scope, null);
       else if (runtime) {
-        if (!isHarnessId(runtime.harnessId) || !modelSupportedByHarness(modelId, runtime.harnessId))
+        if (
+          !isHarnessId(runtime.harnessId) ||
+          !modelAvailableForHarness(modelId, runtime.harnessId, ctx.deps.harnessModelIds)
+        )
           return { error: `model ${modelId} is not supported by ${runtime.harnessId}` };
         const bad = unserviceable(runtime.harnessId);
         if (bad) return bad;
         await ctx.deps.config!.setRuntimeSelectionLatest(scope, { harnessId: runtime.harnessId, modelId });
       } else {
         const harnessId = isHarnessId(ctx.deps.harnessId) ? ctx.deps.harnessId : "pi";
-        const effective = await resolveRuntimeChoiceDurable(ctx.deps.config!, scopeId("org", configOrgId()), scope, {
-          harnessId,
-          modelId: defaultModelForHarness(harnessId, ctx.deps.baseModelDefault),
-        });
-        if (!modelSupportedByHarness(modelId, effective.harnessId))
+        const effective = await resolveRuntimeChoiceDurable(
+          ctx.deps.config!,
+          scopeId("org", configOrgId()),
+          scope,
+          {
+            harnessId,
+            modelId: defaultModelForHarness(harnessId, ctx.deps.baseModelDefault),
+          },
+          undefined,
+          ctx.deps.harnessIds,
+          ctx.deps.harnessModelIds,
+        );
+        if (!modelAvailableForHarness(modelId, effective.harnessId, ctx.deps.harnessModelIds))
           return { error: `model ${modelId} is not supported by ${effective.harnessId}` };
         const bad = unserviceable(effective.harnessId);
         if (bad) return bad;
@@ -421,12 +438,17 @@ export const ADMIN_RESOURCES: readonly AdminResource[] = [
       const harnessId = (ctx.body as { harnessId?: unknown }).harnessId;
       const modelId = (ctx.body as { modelId?: unknown }).modelId;
       if (!isHarnessId(harnessId)) return { error: `runtime requires harnessId (${HARNESS_IDS.join(" | ")})` };
+      if (ctx.deps.harnessIds && !ctx.deps.harnessIds.includes(harnessId))
+        return { error: `harness ${harnessId} is unavailable` };
       const approved = (await ctx.deps.config!.getApprovedHarnessesDurable()) ?? [ctx.deps.harnessId ?? "pi"];
       if (!approved.includes(harnessId)) return { error: `harness ${harnessId} is not approved` };
-      if (typeof modelId !== "string" || !modelSupportedByHarness(modelId, harnessId))
+      if (typeof modelId !== "string" || !modelAvailableForHarness(modelId, harnessId, ctx.deps.harnessModelIds))
         return { error: `model ${String(modelId)} is not supported by ${harnessId}` };
       const runtimeKeys = ctx.deps.providerKeys ?? ALL_PROVIDERS_AVAILABLE;
-      if (!modelServiceable(modelId, modelProviderAvailabilityFor(harnessId, runtimeKeys)))
+      if (
+        !ctx.deps.harnessModelIds?.[harnessId]?.includes(modelId) &&
+        !modelServiceable(modelId, modelProviderAvailabilityFor(harnessId, runtimeKeys))
+      )
         return {
           error: `model ${modelId} isn't serviceable on this deployment: its provider key is not configured for the ${harnessId} harness`,
         };
@@ -443,7 +465,7 @@ export const ADMIN_RESOURCES: readonly AdminResource[] = [
     enumValues: HARNESS_IDS,
     get: (deps) => deps.config!.getApprovedHarnesses(),
     apply: generic(
-      (body, { scope }) => {
+      (body, { scope, deps }) => {
         const bad = orgOnly(scope, "approved harnesses are org-wide");
         if (bad) return bad;
         const raw = (body as { ids?: unknown }).ids;
@@ -451,6 +473,8 @@ export const ADMIN_RESOURCES: readonly AdminResource[] = [
         if (raw.some((id) => !isHarnessId(id)))
           return { error: `unknown harness (expected ${HARNESS_IDS.join(" | ")})` };
         const ids = [...new Set(raw.filter(isHarnessId))];
+        const unavailable = deps.harnessIds ? ids.find((id) => !deps.harnessIds!.includes(id)) : undefined;
+        if (unavailable) return { error: `harness ${unavailable} is unavailable` };
         return { value: ids.length ? ids : null };
       },
       (deps, _scope, ids) => deps.config!.setApprovedHarnesses(ids),

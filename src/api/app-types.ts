@@ -91,8 +91,8 @@ import type {
 import { type DurableMap } from "../persistence/durable-map.ts";
 import type { AdvisoryLock } from "../persistence/advisory-lock.ts";
 import type { Environment, EnvironmentAttachment, EnvironmentStore } from "../environments/environment-store.ts";
-import type { ModelProviderAvailability } from "../model/pi-models.ts";
-import type { RuntimeChoice } from "../harness/harness-router.ts";
+import type { HarnessId, ModelProviderAvailability } from "../model/pi-models.ts";
+import type { HarnessModelIds, RuntimeChoice } from "../harness/harness-router.ts";
 import { type ReachOpts, type ReachResolution, type ReachTarget } from "../reach/reach.ts";
 import { type Project, type ProjectStore } from "../projects/project-store.ts";
 
@@ -558,6 +558,8 @@ export interface AppDeps {
   ackEmojiPicks?: AckEmojiPickStore;
   judgeModelId?: () => string;
   harnessId?: string;
+  harnessIds?: readonly HarnessId[];
+  harnessModelIds?: HarnessModelIds;
   modelProviders?: ModelProviderAvailability;
   providerKeys?: ModelProviderAvailability;
   runtimeFallback?: RuntimeChoice;
