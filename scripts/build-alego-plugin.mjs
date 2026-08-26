@@ -83,6 +83,15 @@ try {
     root: resolve("plugins/web-ui"),
     configFile: resolve("plugins/web-ui/vite.config.ts"),
     base: "/",
+    resolve: {
+      alias: [
+        { find: /^pdfjs-dist$/, replacement: resolve("plugins/web-ui/src/pdfjs-stub.ts") },
+        {
+          find: /^pdfjs-dist\/build\/pdf\.worker\.min\.mjs$/,
+          replacement: resolve("plugins/web-ui/src/pdfjs-stub.ts"),
+        },
+      ],
+    },
     build: {
       outDir: resolve(stagingRoot, "dist/web-ui/dist-web"),
       emptyOutDir: true,
