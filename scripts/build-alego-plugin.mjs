@@ -1,4 +1,4 @@
-import { cp, mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build as buildWithEsbuild } from "esbuild";
@@ -79,16 +79,29 @@ try {
   } catch (error) {
     throw new Error("Alego web assets require `npm ci --prefix plugins/web-ui` before building", { cause: error });
   }
+  const pdfjsStubPath = resolve(stagingRoot, "pdfjs-stub.js");
+  await writeFile(
+    pdfjsStubPath,
+    `
+      export const GlobalWorkerOptions = { workerSrc: "" };
+      export function getDocument() {
+        return {
+          promise: Promise.reject(new Error("PDF processing is unavailable")),
+          destroy: async () => undefined,
+        };
+      }
+    `,
+  );
   await viteBuild({
     root: resolve("plugins/web-ui"),
     configFile: resolve("plugins/web-ui/vite.config.ts"),
     base: "/",
     resolve: {
       alias: [
-        { find: /^pdfjs-dist$/, replacement: resolve("plugins/web-ui/src/pdfjs-stub.ts") },
+        { find: /^pdfjs-dist$/, replacement: pdfjsStubPath },
         {
           find: /^pdfjs-dist\/build\/pdf\.worker\.min\.mjs$/,
-          replacement: resolve("plugins/web-ui/src/pdfjs-stub.ts"),
+          replacement: pdfjsStubPath,
         },
       ],
     },
