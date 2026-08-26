@@ -248,6 +248,10 @@ jobs:
           npm run typecheck
           npm test
           npm run build
+      - name: Verify Alego bundle artifacts
+        env:
+          WEB_UI_BASE: /unexpected
+        run: npm run check:alego-plugin
       - name: Build and boot production image
         run: bash scripts/smoke-surface-image.sh web-ui
 

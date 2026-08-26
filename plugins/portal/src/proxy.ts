@@ -1,23 +1,11 @@
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { signedHeaders } from "../../chassis/src/core-client.ts";
+import { proxyHeaders } from "../../chassis/src/http-proxy.ts";
 import { mintPortalIdentity, PORTAL_IDENTITY_HEADER } from "../../chassis/src/portal-identity.ts";
 
 const IDENTITY_TTL_MS = 60_000;
 
 const FORWARD_REQUEST_HEADERS = ["content-type", "accept", "accept-language", "user-agent", "accept-encoding"];
-
-const DROP_RESPONSE_HEADERS = new Set([
-  "connection",
-  "keep-alive",
-  "transfer-encoding",
-  "upgrade",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "set-cookie",
-  "strict-transport-security",
-]);
 
 function safeForwardHeaders(req: IncomingMessage, base: Record<string, string>): Record<string, string> {
   const headers = { ...base };
@@ -47,12 +35,7 @@ function relay(
       headers: target.headers,
     },
     (upRes) => {
-      const out: Record<string, string | string[]> = {};
-      for (const [k, v] of Object.entries(upRes.headers)) {
-        if (v === undefined) continue;
-        if (DROP_RESPONSE_HEADERS.has(k.toLowerCase())) continue;
-        out[k] = v;
-      }
+      const out = proxyHeaders(upRes.headers, ["set-cookie", "strict-transport-security"]);
       res.writeHead(upRes.statusCode ?? 502, out);
       upRes.on("error", () => res.destroy());
       upRes.pipe(res);

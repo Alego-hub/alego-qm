@@ -1,4 +1,11 @@
-import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
+import {
+  createServer,
+  request as httpRequest,
+  type IncomingMessage,
+  type ServerResponse,
+  type Server,
+} from "node:http";
+import { request as httpsRequest } from "node:https";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Readable } from "node:stream";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
@@ -22,6 +29,7 @@ import {
 } from "../../chassis/src/http.ts";
 import { verifyPortalIdentity, PORTAL_IDENTITY_HEADER } from "../../chassis/src/portal-identity.ts";
 import { createBrandingCache, injectBranding } from "../../chassis/src/branding.ts";
+import { proxyHeaders } from "../../chassis/src/http-proxy.ts";
 import {
   CORE_API_URL as CORE,
   CORE_ORG_ID as ORG,
@@ -31,11 +39,12 @@ import {
 } from "../../chassis/src/env.ts";
 
 const PORT = portFromEnv(8096);
+const HOST = process.env.WEB_UI_HOST;
 const PUBLIC_URL = (process.env.WEB_UI_PUBLIC_URL ?? `http://localhost:${PORT}`).replace(/\/$/, "");
 const WEB_UI_DEV = process.env.WEB_UI_DEV === "1";
 const ALLOW_UNSIGNED_TEST_IDENTITY =
   process.env.NODE_ENV === "test" && process.env.ALLOW_UNSIGNED_TEST_IDENTITY === "1";
-const COOKIE_AUTH = !CORE_SIGNING_SECRET || ALLOW_UNSIGNED_TEST_IDENTITY;
+const COOKIE_AUTH = process.env.WEB_UI_COOKIE_AUTH === "1" || !CORE_SIGNING_SECRET || ALLOW_UNSIGNED_TEST_IDENTITY;
 const AUTH_MODE = COOKIE_AUTH ? "dev" : "portal";
 const ALLOW = (process.env.WEB_UI_PRINCIPALS ?? "")
   .split(",")
@@ -169,6 +178,38 @@ function relay(res: ServerResponse, r: { status: number; text: string }): void {
 function sendHtml(res: ServerResponse, status: number, html: string): void {
   res.writeHead(status, withSecurityHeaders({ "content-type": "text/html; charset=utf-8" }));
   res.end(html);
+}
+
+function relayCoreRequest(req: IncomingMessage, res: ServerResponse): void {
+  const core = new URL(CORE);
+  const headers = proxyHeaders(req.headers);
+  headers.host = core.host;
+  const request = core.protocol === "https:" ? httpsRequest : httpRequest;
+  const upstream = request(
+    {
+      protocol: core.protocol,
+      hostname: core.hostname,
+      port: core.port || undefined,
+      method: req.method,
+      path: req.url,
+      headers,
+    },
+    (upstreamResponse) => {
+      const responseHeaders = proxyHeaders(upstreamResponse.headers);
+      res.writeHead(upstreamResponse.statusCode ?? 502, responseHeaders);
+      upstreamResponse.on("error", () => res.destroy());
+      upstreamResponse.pipe(res);
+    },
+  );
+  upstream.on("error", () => {
+    if (!res.headersSent) json(res, 502, { error: "bad_gateway", message: "core unavailable" });
+    else res.end();
+  });
+  req.on("error", () => upstream.destroy());
+  res.on("close", () => {
+    if (!res.writableFinished) upstream.destroy();
+  });
+  req.pipe(upstream);
 }
 
 const SSE_CORE_POLL_MS = 100;
@@ -2314,9 +2355,9 @@ const routeRequest = async (req: IncomingMessage, res: ServerResponse) => {
     return res.end(JSON.stringify({ ok: true }));
   }
 
-  let oauthCallbackPrefix: string | null = null;
-  if (path.startsWith("/v1/connectors/oauth/")) oauthCallbackPrefix = "/v1/connectors/oauth/";
-  else if (path.startsWith("/connectors/oauth/")) oauthCallbackPrefix = "/connectors/oauth/";
+  if (path === "/v1" || path.startsWith("/v1/")) return relayCoreRequest(req, res);
+
+  const oauthCallbackPrefix = path.startsWith("/connectors/oauth/") ? "/connectors/oauth/" : null;
   if (method === "GET" && oauthCallbackPrefix && path.endsWith("/callback")) {
     const provider = path.slice(oauthCallbackPrefix.length, -"/callback".length);
     const corePath = `/v1/connectors/oauth/${encodeURIComponent(provider)}/callback${url.search}`;
@@ -2407,9 +2448,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   createVite(server)
     .then((v) => {
       vite = v;
-      server.listen(PORT, () => {
+      const ready = () => {
+        const address = server.address();
+        const shownHost = address && typeof address !== "string" ? address.address : (HOST ?? "localhost");
+        const shownPort = address && typeof address !== "string" ? address.port : PORT;
+        const shownHostname = shownHost.includes(":") ? `[${shownHost}]` : shownHost;
         console.log(
-          `[web-ui] surface on http://localhost:${PORT} → core ${CORE} (org ${ORG})${WEB_UI_DEV ? " [vite hmr]" : ""}`,
+          `[web-ui] surface on http://${shownHostname}:${shownPort} → core ${CORE} (org ${ORG})${WEB_UI_DEV ? " [vite hmr]" : ""}`,
         );
         if (!WEB_UI_DEV && !existsSync(join(DIST, "index.html")))
           console.warn("[web-ui] dist-web/ not built — run `npm run build`");
@@ -2418,7 +2463,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
         const t = setInterval(() => void drainWebDeliveries(), WEB_DELIVERY_POLL_MS);
         t.unref?.();
         void runStateFeed();
-      });
+      };
+      if (HOST) server.listen(PORT, HOST, ready);
+      else server.listen(PORT, ready);
     })
     .catch((err: unknown) => {
       console.error("[web-ui] failed to start:", String(err));

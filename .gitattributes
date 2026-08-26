@@ -1,1 +1,3 @@
 alego-plugin/dist/src/alego-plugin.js -whitespace
+alego-plugin/dist/web-ui/server/index.js -whitespace
+alego-plugin/dist/web-ui/dist-web/assets/*.js -whitespace

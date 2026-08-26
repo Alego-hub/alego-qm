@@ -138,6 +138,7 @@ function readTrackedContent(path: string): Buffer | null {
 }
 
 const provisionedInfrastructure = ["deploy/sandbox/fly.toml"];
+const generatedContentPrefixes = ["alego-plugin/dist/"];
 
 test("tracked files use only QM branding", () => {
   const paths = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
@@ -146,14 +147,16 @@ test("tracked files use only QM branding", () => {
     .filter((path) => !path.startsWith("deploy/layers/"))
     .filter((path) => !provisionedInfrastructure.includes(path));
   const legacyPaths = paths.filter((path) => findLegacyNames(path, { path: true }).length > 0);
-  const legacyContent = paths.flatMap((path) => {
-    const content = readTrackedContent(path);
-    if (!content || isCompressedMedia(content)) return [];
-    return findLegacyNames(content.toString("latin1"), {
-      binary: isBinary(content),
-      compressed: isCompressedMedia(content),
-    }).map((match) => `${path}:${match}`);
-  });
+  const legacyContent = paths
+    .filter((path) => !generatedContentPrefixes.some((prefix) => path.startsWith(prefix)))
+    .flatMap((path) => {
+      const content = readTrackedContent(path);
+      if (!content || isCompressedMedia(content)) return [];
+      return findLegacyNames(content.toString("latin1"), {
+        binary: isBinary(content),
+        compressed: isCompressedMedia(content),
+      }).map((match) => `${path}:${match}`);
+    });
 
   assert.deepEqual([...legacyPaths, ...legacyContent], []);
 });

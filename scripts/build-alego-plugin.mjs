@@ -1,5 +1,7 @@
-import { cp, mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
-import { build } from "esbuild";
+import { cp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { build as buildWithEsbuild } from "esbuild";
 
 const packageRoot = "alego-plugin";
 const stagingRoot = `${packageRoot}/.build-${process.pid}`;
@@ -36,7 +38,7 @@ async function verifyArtifact(directory) {
 
 try {
   await mkdir(`${stagingRoot}/dist/src`, { recursive: true });
-  await build({
+  await buildWithEsbuild({
     entryPoints: ["src/alego-plugin.ts"],
     outfile: `${stagingRoot}/dist/src/alego-plugin.js`,
     bundle: true,
@@ -58,6 +60,55 @@ try {
       "@singula-ai/cordis",
     ],
     legalComments: "eof",
+  });
+  await mkdir(`${stagingRoot}/dist/web-ui/server`, { recursive: true });
+  await buildWithEsbuild({
+    entryPoints: ["plugins/web-ui/server/index.ts"],
+    outfile: `${stagingRoot}/dist/web-ui/server/index.js`,
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    target: "node24",
+    legalComments: "eof",
+  });
+  let viteBuild;
+  try {
+    ({ build: viteBuild } = await import(
+      pathToFileURL(resolve("plugins/web-ui/node_modules/vite/dist/node/index.js")).href
+    ));
+  } catch (error) {
+    throw new Error("Alego web assets require `npm ci --prefix plugins/web-ui` before building", { cause: error });
+  }
+  const pdfjsStubPath = resolve(stagingRoot, "pdfjs-stub.js");
+  await writeFile(
+    pdfjsStubPath,
+    `
+      export const GlobalWorkerOptions = { workerSrc: "" };
+      export function getDocument() {
+        return {
+          promise: Promise.reject(new Error("PDF processing is unavailable")),
+          destroy: async () => undefined,
+        };
+      }
+    `,
+  );
+  await viteBuild({
+    root: resolve("plugins/web-ui"),
+    configFile: resolve("plugins/web-ui/vite.config.ts"),
+    base: "/",
+    resolve: {
+      alias: [
+        { find: /^pdfjs-dist$/, replacement: pdfjsStubPath },
+        {
+          find: /^pdfjs-dist\/build\/pdf\.worker\.min\.mjs$/,
+          replacement: pdfjsStubPath,
+        },
+      ],
+    },
+    build: {
+      outDir: resolve(stagingRoot, "dist/web-ui/dist-web"),
+      emptyOutDir: true,
+    },
   });
   await cp("src/resolution/protocols", `${stagingRoot}/dist/src/protocols`, { recursive: true });
   await cp("plugins/onboarding/skills", `${stagingRoot}/plugins/onboarding/skills`, { recursive: true });
