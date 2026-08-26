@@ -13,6 +13,7 @@ await new Promise<void>((r) => core.listen(0, r));
 const SECRET = "auth-mode-portal-test-secret";
 process.env.CORE_API_URL = `http://localhost:${(core.address() as AddressInfo).port}`;
 process.env.CORE_SIGNING_SECRET = SECRET;
+delete process.env.WEB_UI_COOKIE_AUTH;
 process.env.WEB_UI_PRINCIPALS = "alice";
 process.env.ALLOW_UNSIGNED_TEST_IDENTITY = "0";
 

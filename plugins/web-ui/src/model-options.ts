@@ -241,7 +241,13 @@ export function harnessSupportsFastMode(harnessId: string): boolean {
 }
 
 export function harnessSupportsSteer(harnessId: string): boolean {
-  return harnessId === "pi" || harnessId === "claude" || harnessId === "codex" || harnessId === "opencode";
+  return (
+    harnessId === "pi" ||
+    harnessId === "claude" ||
+    harnessId === "codex" ||
+    harnessId === "opencode" ||
+    harnessId === "alego"
+  );
 }
 
 export function defaultEffortForModel(model: Model<Api>): EffortLevel {

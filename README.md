@@ -13,8 +13,10 @@ alego plugin --profile qm add 'github:Alego-hub/alego-qm#path:alego-plugin'
 alego --profile qm
 ```
 
-The plugin starts QM on `http://127.0.0.1:8080`, stores local files under the Alego home,
-and routes every QM turn through an ephemeral Alego Agent reconstructed from QM's transcript store.
+The plugin serves the QM web app and API on `http://127.0.0.1:8080`, stores local files under
+`./data/qm` unless `dataDir` is configured, and routes every QM turn through an ephemeral Alego
+Agent reconstructed from QM's transcript store. Keep the Alego process running and open that URL
+in a browser.
 Pin the GitHub dependency to a reviewed commit for a reproducible installation.
 
 The bundle row can be replaced in the profile's `cordis.patch.yml` to choose another Alego
@@ -38,7 +40,10 @@ provider or model and to pass QM deployment settings:
 Configuration also supports `maxTokens`, `orgId`, `backgroundWork`,
 `allowUnauthenticatedCore`, and `coreSigningSecret`. The `env` map accepts the existing QM
 settings documented in [`.env.example`](./.env.example). Unsigned HTTP ingress is allowed by
-default only on a loopback host; exposing QM on another interface requires a signing secret.
+default only on a loopback host. A non-loopback web listener requires a signing secret plus a
+separately deployed QM Portal/Auth surface that supplies signed portal identity; this Alego bundle
+does not launch those services. Local loopback profiles retain browser sign-in when a signing
+secret protects core traffic.
 Without the Postgres settings shown above, sessions and background-work state are development-only
 in-memory stores and do not survive a profile restart.
 
@@ -46,6 +51,8 @@ Contributors with an Alego source checkout can verify the packed bundle through 
 CLI, Loader, profile, and process lifecycle:
 
 ```bash
+npm ci --prefix plugins/web-ui
+npm run build:alego-plugin
 ALEGO_SOURCE_DIR=/path/to/alego npm run test:alego-source
 ```
 

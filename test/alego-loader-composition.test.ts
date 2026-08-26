@@ -48,6 +48,21 @@ async function waitForHealth(child: ChildProcess, port: number, output: () => st
   throw new Error(`QM did not become healthy through Alego\n${output()}`);
 }
 
+async function verifyWebSurface(port: number): Promise<void> {
+  const root = await fetch(`http://127.0.0.1:${port}/`);
+  assert.equal(root.status, 200);
+  assert.match(root.headers.get("content-type") ?? "", /^text\/html/);
+  assert.match(await root.text(), /<title>QM · Web<\/title>/);
+
+  const core = await fetch(`http://127.0.0.1:${port}/v1/surface-config`);
+  assert.equal(core.status, 200);
+  assert.match(core.headers.get("content-type") ?? "", /^application\/json/);
+
+  const font = await fetch(`http://127.0.0.1:${port}/assets/fonts/KaTeX_Main-Regular.woff2`);
+  assert.equal(font.status, 200);
+  assert.equal(font.headers.get("content-type"), "font/woff2");
+}
+
 async function stopProcess(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const exited = once(child, "exit");
@@ -92,7 +107,14 @@ test(
       });
       await writeFile(
         join(home, "profiles", profile, "cordis.patch.yml"),
-        ["- id: alego-qm", "  config:", `    port: ${port}`, "    backgroundWork: false", ""].join("\n"),
+        [
+          "- id: alego-qm",
+          "  config:",
+          `    port: ${port}`,
+          `    dataDir: ${join(root, "data")}`,
+          "    backgroundWork: false",
+          "",
+        ].join("\n"),
       );
       child = spawn(process.execPath, ["--import", "tsx/esm", alegoCli, "--profile", profile], {
         cwd: alegoSource,
@@ -102,7 +124,9 @@ test(
       child.stdout?.on("data", appendOutput);
       child.stderr?.on("data", appendOutput);
       await waitForHealth(child, port, () => output);
+      await verifyWebSurface(port);
       assert.match(output, /\[qm\] listening on 127\.0\.0\.1:/);
+      assert.match(output, /\[web-ui\] surface on http:\/\/127\.0\.0\.1:/);
     } finally {
       if (child) await stopProcess(child);
       if (child) assert.ok(child.exitCode !== null || child.signalCode !== null);

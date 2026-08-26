@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Context } from "@singula-ai/cordis";
 import Schema from "@singula-ai/schemastery";
+import { startAlegoWebUi, type AlegoWebUiRuntime } from "./alego-web-ui-runtime.ts";
 import { hostEnvironment, loadConfig } from "./config.ts";
 import { createTransientAlegoRuntime } from "./harness/alego-agent-runtime.ts";
 import { alegoHarnessConfigOptions, createAlegoHarness } from "./harness/alego-harness.ts";
@@ -29,7 +30,7 @@ export const Config: Schema<Config> = Schema.object({
   model: Schema.string().min(1).default("deepseek-v4-flash"),
   maxTokens: Schema.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER),
   host: Schema.string().min(1).default("127.0.0.1"),
-  port: Schema.number().step(1).min(0).max(65535).default(8080),
+  port: Schema.number().step(1).min(1).max(65535).default(8080),
   dataDir: Schema.string().min(1).default("./data/qm"),
   orgId: Schema.string().min(1).default("default-org"),
   backgroundWork: Schema.boolean().default(true),
@@ -59,7 +60,7 @@ function qmEnvironment(config: Config): NodeJS.ProcessEnv {
     ...config.env,
     HARNESS: "alego",
     ALEGO_MODEL: config.model,
-    PORT: String(config.port),
+    PORT: "0",
     DATA_DIR: resolve(config.dataDir),
     ORG_ID: config.orgId,
     BACKGROUND_WORK_ENABLED: config.backgroundWork ? "1" : "0",
@@ -79,10 +80,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     const env = qmEnvironment(config);
     const qmConfig = loadConfig(env);
     const agentRuntime = await createTransientAlegoRuntime(ctx.llm, [config.provider]);
+    let runtime: Awaited<ReturnType<typeof startQm>> | undefined;
+    let webUi: AlegoWebUiRuntime | undefined;
     try {
-      const runtime = await startQm(qmConfig, {
+      runtime = await startQm(qmConfig, {
         env,
-        host: config.host,
+        host: "127.0.0.1",
         replaceHarnesses: true,
         harnessModelIds: { alego: [config.model] },
         harnesses: ({ signals, mcpTools }) => [
@@ -101,10 +104,24 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           ),
         ],
       });
+      webUi = await startAlegoWebUi({
+        env,
+        host: config.host,
+        port: config.port,
+        corePort: runtime.address.port,
+        cookieAuth: loopback(config.host),
+      });
+      const startedRuntime = runtime;
+      const startedWebUi = webUi;
       return async () => {
         const failures: unknown[] = [];
         try {
-          await runtime.stop();
+          await startedWebUi.stop();
+        } catch (error) {
+          failures.push(error);
+        }
+        try {
+          await startedRuntime.stop();
         } catch (error) {
           failures.push(error);
         }
@@ -116,13 +133,30 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         if (failures.length) throw new AggregateError(failures, "Alego QM shutdown failed");
       };
     } catch (error) {
+      const failures: unknown[] = [error];
+      if (webUi) {
+        try {
+          await webUi.stop();
+        } catch (cleanupError) {
+          failures.push(cleanupError);
+        }
+      }
+      if (runtime) {
+        try {
+          await runtime.stop();
+        } catch (cleanupError) {
+          failures.push(cleanupError);
+        }
+      }
       try {
         await agentRuntime.stop();
       } catch (cleanupError) {
-        throw new AggregateError([error, cleanupError], "Alego QM startup and cleanup failed", {
-          cause: cleanupError,
-        });
+        failures.push(cleanupError);
       }
+      if (failures.length > 1)
+        throw new AggregateError(failures, "Alego QM startup and cleanup failed", {
+          cause: error,
+        });
       throw error;
     }
   }, "alego-qm.runtime");

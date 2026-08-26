@@ -1,15 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { readdir, readFile } from "node:fs/promises";
 
 test("the published artifact is an installable Alego bundle", async () => {
-  await execFileAsync(process.execPath, ["scripts/build-alego-plugin.mjs", "--check"], {
-    cwd: new URL("..", import.meta.url),
-  });
   const rootManifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
     private: boolean;
     dependencies: Record<string, string>;
@@ -32,6 +25,24 @@ test("the published artifact is an installable Alego bundle", async () => {
   assert.ok(manifest.files.includes("LICENSE"));
   assert.ok(manifest.files.includes("dist/"));
   assert.deepEqual(Object.keys(manifest.dependencies), ["@anthropic-ai/tokenizer"]);
+  assert.match(
+    await readFile(new URL("../alego-plugin/dist/web-ui/dist-web/index.html", import.meta.url), "utf8"),
+    /<title>QM · Web<\/title>/,
+  );
+  assert.ok(
+    (await readdir(new URL("../alego-plugin/dist/web-ui/dist-web/assets/", import.meta.url))).some((file) =>
+      file.endsWith(".js"),
+    ),
+  );
+  assert.ok(
+    (await readdir(new URL("../alego-plugin/dist/web-ui/dist-web/assets/fonts/", import.meta.url))).includes(
+      "KaTeX_Main-Regular.woff2",
+    ),
+  );
+  assert.match(
+    await readFile(new URL("../alego-plugin/dist/web-ui/server/index.js", import.meta.url), "utf8"),
+    /\[web-ui\] surface on/,
+  );
   const plugin = (await import(new URL(`../alego-plugin/${manifest.main}`, import.meta.url).href)) as Record<
     string,
     unknown

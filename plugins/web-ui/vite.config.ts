@@ -1,9 +1,13 @@
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
+import { cp } from "node:fs/promises";
+import { join } from "node:path";
 
 const SERVER = process.env.WEB_UI_SERVER_URL ?? "http://localhost:8096";
 
 const here = (rel: string): string => fileURLToPath(new URL(rel, import.meta.url));
+
+let outputDirectory = "";
 
 export default defineConfig({
   base: process.env.WEB_UI_BASE ?? "/",
@@ -25,6 +29,17 @@ export default defineConfig({
       { find: /^highlight\.js\/lib\/languages\/.*$/, replacement: here("src/hljs-lang-stub.ts") },
     ],
   },
+  plugins: [
+    {
+      name: "katex-fonts",
+      configResolved(config) {
+        outputDirectory = config.build.outDir;
+      },
+      async writeBundle() {
+        await cp(here("node_modules/katex/dist/fonts"), join(outputDirectory, "assets/fonts"), { recursive: true });
+      },
+    },
+  ],
   build: {
     outDir: "dist-web",
     emptyOutDir: true,
