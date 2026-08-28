@@ -445,8 +445,9 @@ export class ApiError extends Error {
 }
 
 export interface SigninRequired {
-  mode?: "portal" | "dev";
-  reason?: "unauthenticated" | "not_allowed";
+  error: "sign in";
+  mode: "portal" | "dev";
+  reason: "unauthenticated" | "not_allowed";
 }
 
 let onSigninRequired: ((detail: SigninRequired) => void) | null = null;
@@ -455,8 +456,13 @@ export function setSigninRequiredHandler(fn: (detail: SigninRequired) => void): 
   onSigninRequired = fn;
 }
 
-export function reportSigninRequired(detail: SigninRequired): void {
-  onSigninRequired?.(detail);
+export function reportSigninRequired(detail: unknown): void {
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return;
+  const candidate = detail as Partial<SigninRequired>;
+  if (candidate.error !== "sign in") return;
+  if (candidate.mode !== "portal" && candidate.mode !== "dev") return;
+  if (candidate.reason !== "unauthenticated" && candidate.reason !== "not_allowed") return;
+  onSigninRequired?.(candidate as SigninRequired);
 }
 
 export interface UiStateRecord {
