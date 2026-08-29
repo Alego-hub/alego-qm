@@ -319,6 +319,12 @@ export interface ApprovalDecision {
   approved: boolean;
   scope?: "once" | "session" | "always";
 }
+
+export async function fetchPendingApprovals(sessionId: string): Promise<PendingApproval[]> {
+  const r = await api<{ approvals: PendingApproval[] }>(`/api/sessions/${encodeURIComponent(sessionId)}/approvals`);
+  return r.approvals ?? [];
+}
+
 export type AssistantWork = AssistantMessage & { work?: WorkBlock; deliveredFiles?: DeliveredFile[] };
 
 export interface RunPoll {

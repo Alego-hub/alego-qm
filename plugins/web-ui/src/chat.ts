@@ -39,6 +39,7 @@ import {
   attachPendingApprovals,
   entriesToMessages,
   fetchEntry,
+  fetchPendingApprovals,
   fetchTranscript,
   currentEarlierCount,
   forkOriginDetails,
@@ -132,10 +133,15 @@ export function markConnectorConnected(provider: string): void {
 
 export function createChatSurface(
   ctx: ConvCtx,
-  dependencies: { fetchTranscript?: typeof fetchTranscript; openSession?: typeof openSession } = {},
+  dependencies: {
+    fetchTranscript?: typeof fetchTranscript;
+    fetchApprovals?: typeof fetchPendingApprovals;
+    openSession?: typeof openSession;
+  } = {},
 ): ChatSurface {
   const runSlot = createRunSlot();
   const transcriptFetcher = dependencies.fetchTranscript ?? fetchTranscript;
+  const approvalFetcher = dependencies.fetchApprovals ?? fetchPendingApprovals;
   const sessionOpener = dependencies.openSession ?? openSession;
 
   const chatState = {
@@ -487,7 +493,13 @@ export function createChatSurface(
       return;
     }
     const agent = chatState.agent;
-    if (!agent || threadRef !== chatState.threadRef || agent.state.isStreaming) return;
+    if (!agent || threadRef !== chatState.threadRef) return;
+    if (agent.state.isStreaming) {
+      void agent.waitForIdle().then(() => {
+        if (agent === chatState.agent && threadRef === chatState.threadRef) void refreshTranscriptFromEntries(agent);
+      });
+      return;
+    }
     void refreshTranscriptFromEntries(agent);
   }
 
@@ -597,10 +609,7 @@ export function createChatSurface(
         refreshedInherited ? entriesToMessages(refreshedInherited, transcriptModel()) : null,
       );
       try {
-        const r = await api<{ approvals: PendingApproval[] }>(
-          `/api/sessions/${encodeURIComponent(sessionId)}/approvals`,
-        );
-        attachPendingApprovals(messages, r.approvals ?? [], transcriptModel());
+        attachPendingApprovals(messages, await approvalFetcher(sessionId), transcriptModel());
       } catch {
         void 0;
       }
