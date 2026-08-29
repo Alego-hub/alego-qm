@@ -43,6 +43,7 @@ export default defineConfig({
   build: {
     outDir: "dist-web",
     emptyOutDir: true,
+    rollupOptions: { output: { hashCharacters: "hex" } },
   },
   server: {
     port: Number(process.env.VITE_PORT ?? 5173),

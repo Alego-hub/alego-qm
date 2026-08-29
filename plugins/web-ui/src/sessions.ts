@@ -28,6 +28,7 @@ import {
 import {
   api,
   attachPendingApprovals,
+  fetchPendingApprovals,
   fetchTranscript,
   currentEarlierCount,
   inheritedTranscript,
@@ -39,7 +40,6 @@ import {
   TAIL_TURNS,
   type TranscriptPage,
   updateSession,
-  type PendingApproval,
   type CoreProject,
   type CoreSession,
 } from "./core-bridge";
@@ -1229,9 +1229,7 @@ export async function openSessionInto(
   const continuable = isContinuable(s, appState.me?.user ?? "");
   const [entriesRes, approvalsRes] = await Promise.all([
     entriesPrefetch ? entriesPrefetch.then((r) => r ?? fetchEntries()) : fetchEntries(),
-    continuable
-      ? api<{ approvals: PendingApproval[] }>(`/api/sessions/${encodeURIComponent(s.id)}/approvals`).catch(() => null)
-      : Promise.resolve(null),
+    continuable ? fetchPendingApprovals(s.id).catch(() => null) : Promise.resolve(null),
   ]);
   window.clearTimeout(skeletonTimer);
 
@@ -1252,7 +1250,7 @@ export async function openSessionInto(
   const earlier = currentEarlierCount(s, entriesRes.earlierEntries ?? 0);
   const anchorSeq = entriesRes.entries?.[0]?.seq ?? null;
   if (continuable) {
-    attachPendingApprovals(messages, approvalsRes?.approvals ?? [], transcriptModel());
+    attachPendingApprovals(messages, approvalsRes ?? [], transcriptModel());
     conv.mountContinuable(s.threadRef, s.id, s.scopeId, messages, s.channelName ?? null, s, inheritedMessages);
     conv.setTranscriptWindow(anchorSeq, earlier, (entriesRes.earlierEntries ?? 0) > 0);
   } else {

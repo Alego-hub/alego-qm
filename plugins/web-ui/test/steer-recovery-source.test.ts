@@ -19,6 +19,19 @@ test("a server-side run starting for an open conversation attaches the view (wor
   assert.match(conversations, /if \(event\.state === "working"\) for \(const conv of live\) conv\.resumeIfIdle\(\);/);
 });
 
+test("terminal session states refresh the open conversation after its live turn settles", () => {
+  assert.match(
+    conversations,
+    /if \(event\.state === "working"\) for \(const conv of live\) conv\.resumeIfIdle\(\);\s*else for \(const conv of live\) conv\.onDelivery\(event\.threadRef\);/,
+  );
+  const at = chat.indexOf("function onDelivery");
+  assert.ok(at >= 0);
+  const body = chat.slice(at, chat.indexOf("function resumeIfIdle", at));
+  assert.match(body, /if \(agent\.state\.isStreaming\) \{/);
+  assert.match(body, /agent\.waitForIdle\(\)\.then/);
+  assert.match(body, /refreshTranscriptFromEntries\(agent\)/);
+});
+
 test("resuming a tracked run pulls the transcript first so the triggering message is on screen", () => {
   const at = chat.indexOf("async function resumeTrackedRun");
   assert.ok(at >= 0);
