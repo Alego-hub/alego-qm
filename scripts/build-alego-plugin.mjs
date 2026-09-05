@@ -55,6 +55,7 @@ try {
       "@singula-ai/alego-attachment",
       "@singula-ai/alego-llm",
       "@singula-ai/alego-session",
+      "@singula-ai/alego-session-projection",
       "@singula-ai/alego-system-prompt",
       "@singula-ai/alego-tools",
       "@singula-ai/cordis",

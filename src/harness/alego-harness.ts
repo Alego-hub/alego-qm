@@ -3,13 +3,13 @@ import type { AgentHandle, AgentRegistry } from "@singula-ai/alego-agent";
 import type { AttachmentStore, ImageAttachmentRef } from "@singula-ai/alego-attachment";
 import {
   BlockAssembler,
-  CallId,
   createAssistantMessage,
   createToolResultMessage,
   createUserMessage,
   type ContentBlock,
   type LlmCallConfig,
   type TokenUsage,
+  type StreamChunk,
 } from "@singula-ai/alego-llm";
 import { SessionId, type SessionEvent } from "@singula-ai/alego-session";
 import type { Context } from "@singula-ai/cordis";
@@ -65,6 +65,10 @@ interface AlegoToolDefinition {
 }
 
 type AlegoScopedContext = Context & {
+  on(
+    name: "agent/assistant-stream",
+    listener: (payload: { frame: { type: string; chunk?: StreamChunk } }) => void,
+  ): unknown;
   tools: {
     restrict(restriction: { allow: readonly string[] }): unknown;
     register(definition: AlegoToolDefinition): unknown;
@@ -103,6 +107,7 @@ type PiToolResult = {
 };
 
 type RawSchema = Record<string, unknown>;
+type AlegoToolCallId = Extract<ContentBlock, { type: "tool-call" }>["id"];
 type WithoutPosition<Event> = Event extends SessionEvent ? Omit<Event, "seq" | "time"> : never;
 type SessionEventInput = WithoutPosition<SessionEvent>;
 type AlegoSeedMessage =
@@ -197,7 +202,7 @@ function piAssistantContent(message: Extract<PiReplayMessage, { role: "assistant
       ? { type: "text", text: block.text }
       : {
           type: "tool-call",
-          id: CallId(block.id),
+          id: block.id as AlegoToolCallId,
           name: block.name,
           arguments: JSON.stringify(block.arguments),
         },
@@ -267,16 +272,17 @@ export function createAlegoSeed(
         openStep(message.timestamp);
       }
       const content = piAssistantContent(message);
+      const data = {
+        turn,
+        step,
+        message: createAssistantMessage({ content, source: { provider, model } }),
+        stream: [],
+      };
       append(
         {
           type: "assistant/message",
-          data: {
-            turn,
-            step,
-            message: createAssistantMessage({ content, source: { provider, model } }),
-          },
+          data,
           surfaceOp: "append",
-          sourceEventSeqs: [],
         },
         message.timestamp,
       );
@@ -296,7 +302,7 @@ export function createAlegoSeed(
       continue;
     }
     if (!openTurn || !openStepActive) continue;
-    const callId = CallId(message.toolCallId);
+    const callId = message.toolCallId as AlegoToolCallId;
     append(
       {
         type: "tool/result",
@@ -643,7 +649,7 @@ export function createAlegoHarness(options: AlegoHarnessOptions): Harness {
         try {
           handle = await options.agents.create({
             sessionId: SessionId(`qm-${randomUUID()}`),
-            meta: { cwd: process.cwd(), seedLength: seed.length },
+            meta: { cwd: process.cwd() },
             seed,
             ...(turn.cancel ? { signal: turn.cancel } : {}),
             agentOptions: {
@@ -689,17 +695,21 @@ export function createAlegoHarness(options: AlegoHarnessOptions): Harness {
                 agentFailed = true;
                 agentFailure = payload.error;
               });
+              const onChunk = (chunk: StreamChunk): void => {
+                const request = requests.at(-1);
+                if (chunk.type !== "text-delta") return;
+                if (request && request.firstAt === undefined) {
+                  request.firstAt = Date.now();
+                  turn.onTextBlockStart?.();
+                }
+                turn.onDelta?.(chunk.text);
+              };
+              scoped.on("agent/assistant-stream", ({ frame }) => {
+                if (frame.type === "chunk" && frame.chunk) onChunk(frame.chunk);
+              });
               scoped.on("session/event", (_session, event: SessionEvent) => {
-                if (event.type === "assistant/chunk") {
-                  const chunk = event.data.chunk;
-                  const request = requests.at(-1);
-                  if (chunk.type === "text-delta") {
-                    if (request && request.firstAt === undefined) {
-                      request.firstAt = Date.now();
-                      turn.onTextBlockStart?.();
-                    }
-                    turn.onDelta?.(chunk.text);
-                  }
+                if ((event.type as string) === "assistant/chunk" && "chunk" in event.data) {
+                  onChunk(event.data.chunk as StreamChunk);
                   return;
                 }
                 if (event.type === "tool/call") {
