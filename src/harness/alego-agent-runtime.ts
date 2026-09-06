@@ -1,7 +1,10 @@
 import AgentRegistry from "@singula-ai/alego-agent";
+import AgentLoop from "@singula-ai/alego-agent-loop";
 import LlmRuntime, { LlmAdapter, type GenerateOptions, type StreamChunk } from "@singula-ai/alego-llm";
 import SessionStore from "@singula-ai/alego-session";
+import SessionProjections from "@singula-ai/alego-session-projection";
 import SystemPrompt from "@singula-ai/alego-system-prompt";
+import ToolRuntime from "@singula-ai/alego-tools";
 import { Context } from "@singula-ai/cordis";
 
 class HostLlmAdapter extends LlmAdapter {
@@ -15,16 +18,14 @@ class HostLlmAdapter extends LlmAdapter {
   stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     return this.host.stream(options);
   }
-}
 
-type CordisPlugin = Parameters<Context["plugin"]>[0];
-
-async function runtimePlugin(name: string): Promise<CordisPlugin> {
-  const imported = (await import(`@singula-ai/${name}`)) as unknown;
-  if (!imported || typeof imported !== "object" || !("default" in imported)) {
-    throw new Error(`@singula-ai/${name} has no default plugin export`);
+  override resolveModel(provider: string, model: string, signal?: AbortSignal) {
+    return this.host.resolveModelInfo(provider, model, signal);
   }
-  return (imported as { default: CordisPlugin }).default;
+
+  override providerRetryPolicy(provider: string) {
+    return this.host.providerRetryPolicy(provider);
+  }
 }
 
 export interface TransientAlegoRuntime {
@@ -40,12 +41,9 @@ export async function createTransientAlegoRuntime(
   if (!routes.length) throw new Error("the transient Alego runtime requires at least one provider route");
   const context = new Context();
   try {
-    const [ToolRuntime, AgentLoop] = await Promise.all([
-      runtimePlugin("alego-tools"),
-      runtimePlugin("alego-agent-loop"),
-    ]);
     await context.plugin(LlmRuntime);
     await context.plugin(SessionStore);
+    await context.plugin(SessionProjections);
     await context.plugin(SystemPrompt);
     await context.plugin(ToolRuntime);
     await context.plugin(AgentRegistry);

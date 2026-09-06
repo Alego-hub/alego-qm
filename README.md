@@ -47,14 +47,25 @@ secret protects core traffic.
 Without the Postgres settings shown above, sessions and background-work state are development-only
 in-memory stores and do not survive a profile restart.
 
-Contributors with an Alego source checkout can verify the packed bundle through Alego's real
-CLI, Loader, profile, and process lifecycle:
+The bundle supports published Alego 0.1.2 and the 0.1.3-alpha.1 runtime. Contributors with
+an Alego source checkout can verify the packed bundle through Alego's built CLI, Loader,
+profile, and process lifecycle. First run `pnpm install` and `pnpm run build` in the Alego
+checkout, then run these commands in this repository:
 
 ```bash
 npm ci --prefix plugins/web-ui
 npm run build:alego-plugin
 ALEGO_SOURCE_DIR=/path/to/alego npm run test:alego-source
 ```
+
+This test installs the packed plugin into an isolated profile, signs in through the web API,
+executes a memory tool, replays the transcript on a follow-up turn, checks streamed output,
+cancels a running turn, and verifies graceful shutdown. Its deterministic LLM provider needs
+no API key. CI runs it against a pinned Alego source revision.
+
+When running this bundle from an Alego source checkout, launch
+`node apps/cli/lib/bin.js --profile qm`. A packed plugin requires the built runtime:
+the source launcher can mix source and built module identities through its TypeScript aliases.
 
 ## What is QM?
 

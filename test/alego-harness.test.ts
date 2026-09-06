@@ -168,168 +168,177 @@ test("taped images become Alego attachment references before replay", async () =
   assert.doesNotThrow(() => Session.create(SessionId("image-seed"), seed));
 });
 
-test("an Alego Agent drives a QM turn and is disposed at the turn boundary", async () => {
-  const listeners = new Map<string, (...args: never[]) => unknown>();
-  const toolNames: string[] = [];
-  const promptSections: unknown[] = [];
-  const restrictions: unknown[] = [];
-  const entries: SessionEntry[] = [];
-  const tape: NewTapeRecord[] = [];
-  const modelCalls: Array<{ model: string; inputTokens: number; entryCount: number }> = [];
-  const llmRequests: HarnessLlmRequestRecord[] = [];
-  const deltas: string[] = [];
-  let textStarts = 0;
-  let disposed = 0;
-  let createdOptions: Record<string, unknown> | undefined;
-  let pending = false;
-  let emitted = false;
-  const agent = {
-    followup() {
-      pending = true;
-    },
-    steer() {},
-    cancel() {},
-    async whenIdle() {
-      if (!pending || emitted) return;
-      pending = false;
-      emitted = true;
-      const request = listeners.get("agent/request")!;
-      await request(
-        { agent, turn: 1, step: 1, signal: new AbortController().signal } as never,
-        (() => Promise.resolve({ provider: "test-provider", model: "test-model" })) as never,
-      );
-      const onEvent = listeners.get("session/event")!;
-      onEvent(
-        {} as never,
-        {
-          type: "assistant/chunk",
-          seq: 0,
-          time: 100,
-          data: { turn: 1, step: 1, chunk: { type: "text-delta", index: 0, text: "Alego reply" } },
-        } satisfies SessionEvent<"assistant/chunk"> as never,
-      );
-      onEvent(
-        {} as never,
-        {
-          type: "assistant/message",
-          seq: 1,
-          time: 101,
-          data: {
-            turn: 1,
-            step: 1,
-            message: createAssistantMessage({
-              content: [{ type: "text", text: "Alego reply" }],
-              source: { provider: "test-provider", model: "test-model" },
-            }),
-            usage: { inputTokens: 10, outputTokens: 3, cacheReadTokens: 2 },
-          },
-          surfaceOp: "append",
-          sourceEventSeqs: [],
-        } satisfies SessionEvent<"assistant/message"> as never,
-      );
-    },
-  };
-  const harness = createAlegoHarness({
-    provider: "test-provider",
-    model: "test-model",
-    agents: {
-      async create(options: Record<string, unknown>) {
-        createdOptions = options;
-        const setup = options.setup as (context: unknown) => unknown;
-        await setup({
-          tools: {
-            restrict(value: unknown) {
-              restrictions.push(value);
-            },
-            register(tool: { name: string }) {
-              toolNames.push(tool.name);
-            },
-          },
-          systemPrompt: {
-            suppressRuntimeContext() {},
-            section(value: unknown) {
-              promptSections.push(value);
-            },
-          },
-          on(event: string, listener: (...args: never[]) => unknown) {
-            listeners.set(event, listener);
-            return () => listeners.delete(event);
-          },
-        });
-        return {
-          agent,
-          async dispose() {
-            disposed += 1;
-          },
-        };
+for (const streamEvent of ["assistant/chunk", "agent/assistant-stream"]) {
+  test(`an Alego Agent records and disposes a turn with ${streamEvent} streaming`, async () => {
+    const listeners = new Map<string, (...args: never[]) => unknown>();
+    const toolNames: string[] = [];
+    const promptSections: unknown[] = [];
+    const restrictions: unknown[] = [];
+    const entries: SessionEntry[] = [];
+    const tape: NewTapeRecord[] = [];
+    const modelCalls: Array<{ model: string; inputTokens: number; entryCount: number }> = [];
+    const llmRequests: HarnessLlmRequestRecord[] = [];
+    const deltas: string[] = [];
+    let textStarts = 0;
+    let disposed = 0;
+    let createdOptions: Record<string, unknown> | undefined;
+    let pending = false;
+    let emitted = false;
+    const agent = {
+      followup() {
+        pending = true;
       },
-    } as never,
-    attachments: { saveImages: async () => [] } as never,
-    llm: { stream: async function* () {} },
-    toolOptions: {
-      mcpTools: () => [
-        {
-          name: "docs_search",
-          serverId: "docs",
-          remoteName: "search",
-          description: "Search documentation",
-          inputSchema: { type: "object", properties: { query: { type: "string" } } },
-          readOnly: true,
+      steer() {},
+      cancel() {},
+      async whenIdle() {
+        if (!pending || emitted) return;
+        pending = false;
+        emitted = true;
+        const request = listeners.get("agent/request")!;
+        await request(
+          { agent, turn: 1, step: 1, signal: new AbortController().signal } as never,
+          (() => Promise.resolve({ provider: "test-provider", model: "test-model" })) as never,
+        );
+        const onEvent = listeners.get("session/event")!;
+        const chunk = { type: "text-delta" as const, index: 0, text: "Alego reply" };
+        if (streamEvent === "agent/assistant-stream") {
+          listeners.get(streamEvent)!({ frame: { type: "chunk", chunk } } as never);
+        } else {
+          onEvent(
+            {} as never,
+            {
+              type: "assistant/chunk",
+              seq: 0,
+              time: 100,
+              data: { turn: 1, step: 1, chunk },
+            } satisfies SessionEvent<"assistant/chunk"> as never,
+          );
+        }
+        onEvent(
+          {} as never,
+          {
+            type: "assistant/message",
+            seq: 1,
+            time: 101,
+            data: {
+              turn: 1,
+              step: 1,
+              message: createAssistantMessage({
+                content: [{ type: "text", text: "Alego reply" }],
+                source: { provider: "test-provider", model: "test-model" },
+              }),
+              usage: { inputTokens: 10, outputTokens: 3, cacheReadTokens: 2 },
+            },
+            surfaceOp: "append",
+            sourceEventSeqs: [],
+          } satisfies SessionEvent<"assistant/message"> as never,
+        );
+      },
+    };
+    const harness = createAlegoHarness({
+      provider: "test-provider",
+      model: "test-model",
+      agents: {
+        async create(options: Record<string, unknown>) {
+          createdOptions = options;
+          const setup = options.setup as (context: unknown) => unknown;
+          await setup({
+            tools: {
+              restrict(value: unknown) {
+                restrictions.push(value);
+              },
+              register(tool: { name: string }) {
+                toolNames.push(tool.name);
+              },
+            },
+            systemPrompt: {
+              suppressRuntimeContext() {},
+              section(value: unknown) {
+                promptSections.push(value);
+              },
+            },
+            on(event: string, listener: (...args: never[]) => unknown) {
+              listeners.set(event, listener);
+              return () => listeners.delete(event);
+            },
+          });
+          return {
+            agent,
+            async dispose() {
+              disposed += 1;
+            },
+          };
         },
-      ],
-    },
+      } as never,
+      attachments: { saveImages: async () => [] } as never,
+      llm: { stream: async function* () {} },
+      toolOptions: {
+        mcpTools: () => [
+          {
+            name: "docs_search",
+            serverId: "docs",
+            remoteName: "search",
+            description: "Search documentation",
+            inputSchema: { type: "object", properties: { query: { type: "string" } } },
+            readOnly: true,
+          },
+        ],
+      },
+    });
+    const scope = "org:test" as ScopeId;
+    const turn: HarnessTurnInput = {
+      session: { id: "session-1" } as HarnessTurnInput["session"],
+      input: "hello",
+      systemPrompt: "Use QM tools.",
+      history: [],
+      tools: {} as HarnessTurnInput["tools"],
+      scopeLabel: scope,
+      orgScopeId: scope,
+      readOnly: true,
+      emit: async (entry: NewEntry) => {
+        const saved = {
+          ...entry,
+          sessionId: "session-1",
+          seq: entries.length,
+          createdAt: Date.now(),
+        } as SessionEntry;
+        entries.push(saved);
+        return saved;
+      },
+      tape: async (record) => void tape.push(record),
+      recordModelCall: (record) => void modelCalls.push(record),
+      recordLlmRequest: (record) => void llmRequests.push(record),
+      onDelta: (text) => void deltas.push(text),
+      onTextBlockStart: () => void (textStarts += 1),
+    };
+    const result = await harness.turns.runTurn(turn);
+    assert.equal(result.reply, "Alego reply");
+    assert.equal(result.modelCalls, 1);
+    assert.equal(disposed, 1);
+    assert.ok(createdOptions);
+    assert.equal((createdOptions.agentOptions as { provider: string }).provider, "test-provider");
+    assert.deepEqual(restrictions, [{ allow: [] }]);
+    assert.deepEqual(promptSections, [{ name: "alego-qm", order: 0, text: "Use QM tools.", complete: true }]);
+    assert.ok(toolNames.includes("memory"));
+    assert.ok(toolNames.includes("finish_silently"));
+    assert.ok(toolNames.includes("docs_search"));
+    assert.deepEqual(deltas, ["Alego reply"]);
+    assert.equal(textStarts, 1);
+    assert.deepEqual(
+      entries.filter((entry) => entry.type === "user" || entry.type === "assistant").map((entry) => entry.type),
+      ["user", "assistant"],
+    );
+    assert.equal(tape.filter((record) => record.kind === "message").length, 2);
+    assert.equal(llmRequests.length, 1);
+    const llmRequest = llmRequests[0];
+    assert.ok(llmRequest);
+    assert.notEqual(llmRequest.ttftMs, null);
+    assert.equal(llmRequest.usage?.totalTokens, 15);
+    assert.equal((llmRequest.promptEnvelope as { provider: string }).provider, "test-provider");
+    assert.equal(modelCalls[0]?.model, "test-model");
+    await harness.turns.close?.();
   });
-  const scope = "org:test" as ScopeId;
-  const turn: HarnessTurnInput = {
-    session: { id: "session-1" } as HarnessTurnInput["session"],
-    input: "hello",
-    systemPrompt: "Use QM tools.",
-    history: [],
-    tools: {} as HarnessTurnInput["tools"],
-    scopeLabel: scope,
-    orgScopeId: scope,
-    readOnly: true,
-    emit: async (entry: NewEntry) => {
-      const saved = {
-        ...entry,
-        sessionId: "session-1",
-        seq: entries.length,
-        createdAt: Date.now(),
-      } as SessionEntry;
-      entries.push(saved);
-      return saved;
-    },
-    tape: async (record) => void tape.push(record),
-    recordModelCall: (record) => void modelCalls.push(record),
-    recordLlmRequest: (record) => void llmRequests.push(record),
-    onDelta: (text) => void deltas.push(text),
-    onTextBlockStart: () => void (textStarts += 1),
-  };
-  const result = await harness.turns.runTurn(turn);
-  assert.equal(result.reply, "Alego reply");
-  assert.equal(result.modelCalls, 1);
-  assert.equal(disposed, 1);
-  assert.ok(createdOptions);
-  assert.equal((createdOptions.agentOptions as { provider: string }).provider, "test-provider");
-  assert.deepEqual(restrictions, [{ allow: [] }]);
-  assert.deepEqual(promptSections, [{ name: "alego-qm", order: 0, text: "Use QM tools.", complete: true }]);
-  assert.ok(toolNames.includes("memory"));
-  assert.ok(toolNames.includes("finish_silently"));
-  assert.ok(toolNames.includes("docs_search"));
-  assert.deepEqual(deltas, ["Alego reply"]);
-  assert.equal(textStarts, 1);
-  assert.deepEqual(
-    entries.filter((entry) => entry.type === "user" || entry.type === "assistant").map((entry) => entry.type),
-    ["user", "assistant"],
-  );
-  assert.equal(tape.filter((record) => record.kind === "message").length, 2);
-  const llmRequest = llmRequests[0];
-  assert.ok(llmRequest);
-  assert.equal(llmRequest.usage?.totalTokens, 15);
-  assert.equal((llmRequest.promptEnvelope as { provider: string }).provider, "test-provider");
-  assert.equal(modelCalls[0]?.model, "test-model");
-  await harness.turns.close?.();
-});
+}
 
 test("Alego Agent failures reject the QM turn", async () => {
   const listeners = new Map<string, (...args: never[]) => unknown>();

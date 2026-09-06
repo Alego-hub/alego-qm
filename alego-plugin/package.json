@@ -1,6 +1,6 @@
 {
   "name": "alego-qm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "QM's durable multiplayer agent runtime as an Alego plugin bundle.",
   "license": "MIT",
   "type": "module",
@@ -21,14 +21,15 @@
     "node": ">=24.15.0"
   },
   "peerDependencies": {
-    "@singula-ai/alego-agent": "^0.1.2",
-    "@singula-ai/alego-agent-loop": "^0.1.2",
-    "@singula-ai/alego-attachment": "^0.1.2",
-    "@singula-ai/alego-llm": "^0.1.2",
-    "@singula-ai/alego-session": "^0.1.2",
-    "@singula-ai/alego-system-prompt": "^0.1.2",
-    "@singula-ai/alego-tools": "^0.1.2",
-    "@singula-ai/cordis": "^4.0.1"
+    "@singula-ai/alego-agent": "^0.1.2 || ^0.1.3-alpha.1",
+    "@singula-ai/alego-agent-loop": "^0.1.2 || ^0.1.3-alpha.1",
+    "@singula-ai/alego-attachment": "^0.1.2 || ^0.1.3-alpha.1",
+    "@singula-ai/alego-llm": "^0.1.2 || ^0.1.3-alpha.1",
+    "@singula-ai/alego-session": "^0.1.2 || ^0.1.3-alpha.1",
+    "@singula-ai/alego-system-prompt": "^0.1.2 || ^0.1.3-alpha.1",
+    "@singula-ai/alego-tools": "^0.1.2 || ^0.1.3-alpha.1",
+    "@singula-ai/cordis": "^4.0.1",
+    "@singula-ai/alego-session-projection": "^0.1.2 || ^0.1.3-alpha.1"
   },
   "dependencies": {
     "@anthropic-ai/tokenizer": "^0.0.4"
